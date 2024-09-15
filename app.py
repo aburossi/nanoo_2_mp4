@@ -3,44 +3,29 @@ import requests
 from bs4 import BeautifulSoup
 import re
 
-# Function to extract video URL from Nanoo.tv page
+# Function to extract the video URL from the Nanoo.tv page
 def get_video_url(page_url):
     try:
         # Fetch the page content
         response = requests.get(page_url)
         response.raise_for_status()
-        
-        # Parse the HTML with BeautifulSoup
+
+        # Parse the HTML content
         soup = BeautifulSoup(response.content, 'html.parser')
-        
-        # Check for a direct video URL in 'video' or 'source' tags
-        video_tag = soup.find('video')
-        if video_tag:
-            source_tag = video_tag.find('source')
-            if source_tag and 'src' in source_tag.attrs:
-                return source_tag['src']
 
-        # Search for any other <source> tags in the page
-        source_tag = soup.find('source')
-        if source_tag and 'src' in source_tag.attrs:
-            return source_tag['src']
-
-        # If there's an iframe, check if it's hosting a video
-        iframe_tag = soup.find('iframe')
-        if iframe_tag and 'src' in iframe_tag.attrs:
-            iframe_url = iframe_tag['src']
-            return get_video_url(iframe_url)  # Recursive call to handle iframes
-        
-        # Search in <script> tags for potential video URLs (e.g., sometimes embedded in JS)
+        # Search for any mp4 file in the HTML
+        # Use a regex to match .mp4 URLs with possible tokens
+        mp4_pattern = re.compile(r'https:\/\/http\.nanoo\.tv\/mediacontent\/export\/\d+\/\d+_stream_hi\.mp4\?st=[a-zA-Z0-9]+&e=\d+')
         script_tags = soup.find_all('script')
+
+        # Search through all script tags to find the video link
         for script in script_tags:
             if script.string:
-                # Check if there's any mention of an .mp4 file in the script text
-                mp4_match = re.search(r'https?://.*\.mp4', script.string)
-                if mp4_match:
-                    return mp4_match.group(0)
-        
-        # If nothing found, return None
+                video_url_match = mp4_pattern.search(script.string)
+                if video_url_match:
+                    return video_url_match.group(0)  # Return the first match
+
+        # If no match is found, return None
         return None
 
     except Exception as e:
@@ -66,13 +51,13 @@ if st.button('Find and Download MP4'):
                 response = requests.get(video_url, stream=True)
                 video_path = "/tmp/video.mp4"
                 
-                # Save video file
+                # Save the video file
                 with open(video_path, 'wb') as video_file:
                     for chunk in response.iter_content(chunk_size=1024):
                         if chunk:
                             video_file.write(chunk)
 
-                # Provide download button for the user
+                # Provide a download button for the user
                 with open(video_path, 'rb') as file:
                     st.download_button(
                         label="Download MP4",
