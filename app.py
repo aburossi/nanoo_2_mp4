@@ -1,30 +1,47 @@
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
+import re
 
-# Function to extract the video URL from a Nanoo.tv page
+# Function to extract video URL from Nanoo.tv page
 def get_video_url(page_url):
     try:
-        # Get the page content
+        # Fetch the page content
         response = requests.get(page_url)
         response.raise_for_status()
-
+        
         # Parse the HTML with BeautifulSoup
         soup = BeautifulSoup(response.content, 'html.parser')
-
-        # Find the video source link (you might need to inspect the actual HTML structure)
+        
+        # Check for a direct video URL in 'video' or 'source' tags
         video_tag = soup.find('video')
         if video_tag:
-            video_url = video_tag['src']
-            return video_url
-        else:
-            # Fallback to searching through known attributes if not in a <video> tag
-            # e.g., looking for .mp4 files in all links
-            video_link = soup.find('a', href=True, string='.mp4')
-            if video_link:
-                return video_link['href']
-            else:
-                return None
+            source_tag = video_tag.find('source')
+            if source_tag and 'src' in source_tag.attrs:
+                return source_tag['src']
+
+        # Search for any other <source> tags in the page
+        source_tag = soup.find('source')
+        if source_tag and 'src' in source_tag.attrs:
+            return source_tag['src']
+
+        # If there's an iframe, check if it's hosting a video
+        iframe_tag = soup.find('iframe')
+        if iframe_tag and 'src' in iframe_tag.attrs:
+            iframe_url = iframe_tag['src']
+            return get_video_url(iframe_url)  # Recursive call to handle iframes
+        
+        # Search in <script> tags for potential video URLs (e.g., sometimes embedded in JS)
+        script_tags = soup.find_all('script')
+        for script in script_tags:
+            if script.string:
+                # Check if there's any mention of an .mp4 file in the script text
+                mp4_match = re.search(r'https?://.*\.mp4', script.string)
+                if mp4_match:
+                    return mp4_match.group(0)
+        
+        # If nothing found, return None
+        return None
 
     except Exception as e:
         st.error(f"Error occurred: {e}")
