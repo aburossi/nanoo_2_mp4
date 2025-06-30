@@ -210,7 +210,7 @@ def main():
     st.write("**Copy the link as shown in the image and paste it below:**")
     
     if selected_example == "Nanoo.tv (Example)":
-        st.image("nanoo.png", caption="1. Click 'Share', 2. Copy the generated link.")
+        st.image("nanoo.png", caption="1. Click 'Create access link', 2. Copy the generated link.")
     elif selected_example == "SRF Video":
         st.image("srf-video.png", caption="1. Click 'Teilen' (Share), 2. Click the 'Link' icon to copy.")
     elif selected_example == "SRF Audio (Embed Code)":
