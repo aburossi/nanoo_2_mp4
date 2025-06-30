@@ -153,7 +153,7 @@ def start_selenium_process(url: str):
             st.error("❌ Selenium fallback also failed. Could not find a downloadable video or audio stream.")
             st.session_state.stage = 'initial'
     except Exception as e:
-        status_widget.empty()
+        status_widget.empty
         st.error(f"An error occurred during Selenium browser automation: {e}")
         st.session_state.stage = 'initial'
 
@@ -192,26 +192,37 @@ def main():
         st.session_state.stream_urls = ""
         st.session_state.download_info = {}
 
-    # --- UPDATED: How-To Guide with Images ---
-    with st.expander("📖 How to Get the Right Link (Visual Guide)"):
-        st.subheader("Nanoo.tv")
-        st.image("nanoo.png", caption="1. Click 'Share', 2. Copy the generated link.")
-        
-        st.subheader("SRF Video")
-        st.image("srf-video.png", caption="1. Click 'Teilen' (Share), 2. Click the 'Link' icon to copy.")
-
-        st.subheader("SRF Audio / Radio")
-        st.image("srf-audio.png", caption="1. Click 'Teilen' (Share), 2. Copy the 'Embed Code'.")
-
-    # --- URL Input ---
+    # --- URL Input Section ---
     url_examples = {
         "SRF Video": "https://www.srf.ch/play/tv/redirect/detail/5b477667-1d20-414d-8ab0-2d0f6ac565a1",
         "SRF Audio (Embed Code)": '<iframe width="560" height="315" src="https://www.srf.ch/play/embed?urn=urn:srf:audio:17b705a0-4113-41d0-aa00-d0f3f2205f5f&subdivisions=false" allowfullscreen allow="geolocation *; autoplay; encrypted-media"></iframe>',
         "Nanoo.tv (Example)": "https://nanoo.tv/link/example-placeholder",
     }
-    selected_example = st.radio("Choose an example:", list(url_examples.keys()), horizontal=True, key="examples")
+    selected_example = st.radio(
+        "First, choose the type of link you have:", 
+        list(url_examples.keys()), 
+        horizontal=True, 
+        key="examples"
+    )
     
-    url_input = st.text_input("Or paste any URL or Embed Code here:", value=url_examples[selected_example], key="url_input_box")
+    # --- MODIFIED: Dynamic Visual Guide ---
+    st.markdown("---")
+    st.write("**Copy the link as shown in the image and paste it below:**")
+    
+    if selected_example == "Nanoo.tv (Example)":
+        st.image("nanoo.png", caption="1. Click 'Share', 2. Copy the generated link.")
+    elif selected_example == "SRF Video":
+        st.image("srf-video.png", caption="1. Click 'Teilen' (Share), 2. Click the 'Link' icon to copy.")
+    elif selected_example == "SRF Audio (Embed Code)":
+        st.image("srf-audio.png", caption="1. Click 'Teilen' (Share), 2. Copy the 'Embed Code'.")
+    
+    url_input = st.text_input(
+        "Paste your URL or Embed Code here:", 
+        value=url_examples[selected_example], 
+        key="url_input_box"
+    )
+    st.markdown("---")
+
 
     if st.button("Fetch Data from URL", type="primary"):
         if url_input:
