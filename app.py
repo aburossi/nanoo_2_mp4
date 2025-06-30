@@ -33,11 +33,9 @@ def get_video_info_selenium_cloud(nanoo_url: str) -> dict:
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-gpu")
         
-        # --- FIX APPLIED HERE ---
         # Add a unique user data directory for each run to prevent session conflicts
         chrome_options.add_argument(f"--user-data-dir=/tmp/selenium_{int(time.time())}")
-        # ------------------------
-
+        
         # Enable performance logging to capture network requests
         chrome_options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
         
@@ -178,23 +176,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-```
-
-### What I Changed
-
-In the `get_video_info_selenium_cloud` function, I added/changed two key things:
-
-1.  **Unique User Directory:**
-    ```python
-    chrome_options.add_argument(f"--user-data-dir=/tmp/selenium_{int(time.time())}")
-    ```
-    This line creates a new, temporary profile directory for each run, named with the current timestamp (e.g., `/tmp/selenium_1677611234`). This completely avoids the "directory is already in use" conflict.
-
-2.  **Explicit Driver Service:**
-    ```python
-    service = ChromeService(executable_path="/usr/bin/chromedriver")
-    with webdriver.Chrome(service=service, options=chrome_options) as driver:
-    ```
-    This tells Selenium the exact path to the `chromedriver` executable that we installed via `packages.txt`. This is more reliable than hoping it's found in the system's `PATH`.
-
-Please update your `app.py` with this new code. Your `packages.txt` and `requirements.txt` files are correct and do not need to be changed. This should finally resolve the iss
