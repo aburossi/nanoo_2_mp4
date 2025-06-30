@@ -6,7 +6,7 @@ import re
 import json
 import time
 from urllib.parse import urlparse
-import requests # <-- THE MISSING LINE IS ADDED HERE
+import requests
 
 # --- Selenium Imports ---
 from selenium import webdriver
@@ -109,11 +109,16 @@ def download_with_yt_dlp(video_url: str):
         "yt-dlp",
         "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "--merge-output-format", "mp4",
+        # --- FIX APPLIED HERE ---
+        # Add extractor arguments to pretend we are an Android client for YouTube.
+        # This helps bypass 403 Forbidden errors.
+        "--extractor-args", "youtube:player_client=android",
+        # ------------------------
         "-o", output_template,
         video_url
     ]
     
-    log_area = st.expander("Show yt-dlp Logs")
+    log_area = st.expander("Show yt-dlp Logs", expanded=True)
     full_log = ""
     unsupported_url_error = False
 
@@ -162,11 +167,11 @@ def main():
     with st.expander("How this works"):
         st.markdown("""
         This app combines two methods to maximize success:
-        1.  **Fast Method (`yt-dlp`):** It first tries to download using `yt-dlp`, which is very fast for supported sites (like SRF, YouTube, etc.).
+        1.  **Fast Method (`yt-dlp`):** It first tries to download using `yt-dlp`. For sites like YouTube that may block server requests, it pretends to be an Android app to improve reliability.
         2.  **Fallback Method (`Selenium`):** If the fast method fails (like with Nanoo.tv), it automatically launches a virtual browser in the background to find the video link, just like a human user.
         """)
 
-    url_input = st.text_input("Enter Video Page URL:", value="https://www.srf.ch/play/tv/redirect/detail/5b477667-1d20-414d-8ab0-2d0f6ac565a1")
+    url_input = st.text_input("Enter Video Page URL:", value="https://www.youtube.com/watch?v=0tQJsKGrNAw")
     st.caption("Tip: For SRF, use the '.../redirect/detail/...' URL, not the '.../embed?urn=...' one.")
     
     if st.button("Download Video", type="primary"):
