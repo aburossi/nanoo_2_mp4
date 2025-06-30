@@ -94,18 +94,43 @@ def download_direct_link(stream_url: str):
 # --- yt-dlp Downloader (for SRF and other standard sites) ---
 def download_with_yt_dlp(video_url: str):
     """
-    Primary method using yt-dlp to download video. If it fails with a generic
-    extractor error, it will trigger the Selenium fallback.
+    Primary method using yt-dlp. It first gets the raw stream URL(s) for the user
+    to copy, then proceeds with the full download and merge process.
     """
-    st.info("🚀 Attempting download with yt-dlp (fast method)...")
+    st.info("🚀 Attempting to extract link and download with yt-dlp...")
     
+    # --- New Step: Get and Display Stream URL(s) First ---
+    try:
+        st.write("Step 1: Extracting streamable link(s) for copying...")
+        get_url_command = [
+            "yt-dlp",
+            "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+            "-g", # The flag to get the raw URL(s)
+            video_url
+        ]
+        result = subprocess.run(get_url_command, capture_output=True, text=True, check=True, encoding='utf-8')
+        stream_urls = result.stdout.strip()
+        
+        if stream_urls:
+            st.success("✅ Found streamable link(s):")
+            st.code(stream_urls, language='text')
+        else:
+            st.warning("Could not extract a direct streamable link, but will attempt download anyway.")
+
+    except subprocess.CalledProcessError:
+        # If getting the URL fails, it might still be downloadable.
+        st.warning("Could not extract a direct streamable link, but will proceed with download attempt.")
+
+    st.markdown("---")
+    st.write("Step 2: Starting full download and merge process...")
+    
+    # --- Original Full Download Logic ---
     temp_dir = "temp_downloads"
     if not os.path.exists(temp_dir):
         os.makedirs(temp_dir)
         
     output_template = os.path.join(temp_dir, "%(title)s.%(ext)s")
     
-    # Reverted to the stable command without YouTube-specific arguments
     command = [
         "yt-dlp",
         "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
@@ -114,21 +139,20 @@ def download_with_yt_dlp(video_url: str):
         video_url
     ]
     
-    log_area = st.expander("Show yt-dlp Logs", expanded=True)
+    log_area = st.expander("Show Full Download Logs", expanded=True)
     unsupported_url_error = False
 
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, encoding='utf-8')
     
     for line in iter(process.stdout.readline, ""):
         log_area.text(line.strip())
-        # Check for the specific error that indicates we should fall back
         if "Unsupported URL" in line or "Falling back on generic information extractor" in line:
             unsupported_url_error = True
     
     process.wait()
     
     if process.returncode == 0:
-        st.success("✅ yt-dlp download complete!")
+        st.success("✅ Full file download complete!")
         try:
             downloaded_file = max([os.path.join(temp_dir, f) for f in os.listdir(temp_dir)], key=os.path.getctime)
             file_name = os.path.basename(downloaded_file)
@@ -136,7 +160,7 @@ def download_with_yt_dlp(video_url: str):
             st.markdown("---")
             with open(downloaded_file, "rb") as fp:
                 st.download_button(
-                    label=f"⬇️ Download {file_name}",
+                    label=f"⬇️ Download merged file: {file_name}",
                     data=fp,
                     file_name=file_name,
                     mime="video/mp4"
@@ -145,12 +169,11 @@ def download_with_yt_dlp(video_url: str):
         except (ValueError, FileNotFoundError):
              st.error("Could not find the downloaded file after processing.")
     else:
-        # If the process failed, check if it was due to an unsupported URL
         if unsupported_url_error:
             st.warning("⚠️ yt-dlp does not support this URL directly. Triggering fallback to browser automation method...")
             download_with_selenium(video_url)
         else:
-            st.error("❌ yt-dlp failed. See logs above for details.")
+            st.error("❌ yt-dlp failed. See full logs above for details.")
 
 
 # --- Main App ---
