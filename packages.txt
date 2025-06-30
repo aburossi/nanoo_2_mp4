@@ -1,2 +1,1 @@
-# System packages required for running headless Chrome with Selenium on Streamlit Community Cloud.
 google-chrome-stable
