@@ -15,19 +15,30 @@ from selenium.webdriver.chrome.options import Options
 
 # --- Helper function to display the final download button ---
 def display_download_button(file_name: str, data: io.BytesIO, label: str):
-    """Creates the download button for the user."""
+    """Creates the download button for the user with the correct MIME type."""
+    # Determine MIME type from file extension
+    file_ext = os.path.splitext(file_name)[1].lower()
+    mime_types = {
+        '.mp4': 'video/mp4',
+        '.mp3': 'audio/mpeg',
+        '.m4a': 'audio/mp4',
+        '.webm': 'video/webm',
+        '.ogg': 'audio/ogg'
+    }
+    mime = mime_types.get(file_ext, 'application/octet-stream') # Fallback
+
     st.download_button(
         label=f"⬇️ {label}: {file_name}",
         data=data,
         file_name=file_name,
-        mime="video/mp4",
+        mime=mime,
     )
 
-# --- Selenium-based Downloader (for Nanoo.tv and other tricky sites) ---
+# --- Selenium-based Downloader (for tricky sites) ---
 def start_selenium_process(url: str):
     """
-    Fallback method using Selenium to find a direct .mp4 link by sniffing network traffic.
-    The download itself is triggered by a user button.
+    Fallback method using Selenium to find a direct media link (.mp4, .mp3)
+    by sniffing network traffic.
     """
     status_widget = st.empty()
     try:
@@ -42,22 +53,20 @@ def start_selenium_process(url: str):
         chrome_options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
 
         status_widget.info("🌍 Selenium: Navigating to URL...")
-        # Ensure the path to chromedriver is correct for your Streamlit environment
         service = ChromeService(executable_path="/usr/bin/chromedriver")
 
         with webdriver.Chrome(service=service, options=chrome_options) as driver:
             driver.get(url)
-            # Increased sleep time to allow for more complex sites to load
             time.sleep(12)
-            status_widget.info("🕵️‍♂️ Selenium: Analyzing network traffic...")
+            status_widget.info("🕵️‍♂️ Selenium: Analyzing network traffic for video/audio streams...")
             logs = driver.get_log("performance")
 
         status_widget.empty()
 
         stream_url = None
-        # Enhanced regex to find more stream variations
-        stream_pattern = re.compile(r'https?://.*(?:_stream_|/videos?/|manifest).*?\.mp4(?:[?&].*)?$')
-        
+        # --- MODIFIED: Updated regex to find .mp4 and .mp3 files ---
+        stream_pattern = re.compile(r'https?://.*(?:_stream_|/videos?/|/audio/|manifest|media).*?\.(?:mp4|mp3)(?:[?&].*)?$', re.IGNORECASE)
+
         for entry in logs:
             log = json.loads(entry["message"])["message"]
             if (
@@ -70,16 +79,15 @@ def start_selenium_process(url: str):
                 if stream_pattern.search(found_url):
                     stream_url = found_url
                     break
-        
+
         if stream_url:
-            st.success("✅ Selenium found a potential .mp4 link!")
+            st.success("✅ Selenium found a potential media link!")
             st.code(stream_url, language="text")
-            
-            # Add a button to let the user initiate the download
+
             if st.button("Start Download from Found Link", key="selenium_download"):
                 download_from_direct_link(stream_url)
         else:
-            st.error("❌ Selenium fallback failed. Could not find a downloadable video stream in the network traffic.")
+            st.error("❌ Selenium fallback failed. Could not find a downloadable video or audio stream.")
 
     except Exception as e:
         status_widget.empty()
@@ -89,45 +97,46 @@ def start_selenium_process(url: str):
 def download_from_direct_link(stream_url: str):
     """Helper function to download from a direct link when a button is pressed."""
     try:
+        # Sanitize filename from URL
         file_name = os.path.basename(urlparse(stream_url).path)
         if not file_name:
-             # Create a fallback filename
-            file_name = f"video_{int(time.time())}.mp4"
+            file_ext = ".mp3" if ".mp3" in stream_url else ".mp4"
+            file_name = f"media_file_{int(time.time())}{file_ext}"
 
         with st.spinner(f"Downloading '{file_name}'... This may take a moment."):
             response = requests.get(stream_url, stream=True, timeout=60)
             response.raise_for_status()
-            
-            video_bytes = io.BytesIO()
+
+            media_bytes = io.BytesIO()
             for chunk in response.iter_content(chunk_size=8192):
-                video_bytes.write(chunk)
-            video_bytes.seek(0)
-            
-            display_download_button(file_name, video_bytes, "Download File")
+                media_bytes.write(chunk)
+            media_bytes.seek(0)
+
+            # --- MODIFIED: display_download_button now handles MIME types ---
+            display_download_button(file_name, media_bytes, "Download File")
 
     except requests.exceptions.RequestException as e:
         st.error(f"Failed to download from the direct link: {e}")
     except Exception as e:
         st.error(f"An unexpected error occurred during download: {e}")
 
-# --- yt-dlp Downloader (for SRF and other standard sites) ---
+# --- yt-dlp Downloader (Primary Method) ---
 def fetch_data_with_yt_dlp(video_url: str):
     """
-    Primary method using yt-dlp. It first gets streamable links.
-    The user can then choose to trigger the full download and merge process.
+    Primary method using yt-dlp, now with improved format selection for both
+    video and audio files.
     """
     st.info("🚀 Using yt-dlp to analyze the URL...")
-    
-    # --- Step 1: Get and Display Stream URL(s) First ---
+
+    # --- MODIFIED: Format selection is now more inclusive of audio formats ---
+    format_selector = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/bestaudio/best"
+
     try:
         st.write("Analyzing streamable link(s)...")
-        get_url_command = [
-            "yt-dlp", "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-            "-g", video_url
-        ]
+        get_url_command = ["yt-dlp", "-f", format_selector, "-g", video_url]
         result = subprocess.run(get_url_command, capture_output=True, text=True, check=True, encoding='utf-8')
         stream_urls = result.stdout.strip()
-        
+
         if stream_urls:
             st.success("✅ Found streamable link(s) for direct use:")
             st.code(stream_urls, language='text')
@@ -135,93 +144,85 @@ def fetch_data_with_yt_dlp(video_url: str):
             st.warning("Could not extract a direct streamable link, but will attempt full download if requested.")
 
     except subprocess.CalledProcessError as e:
-        # If getting the URL fails, it might be an unsupported URL or still downloadable.
         if "Unsupported URL" in e.stderr:
              st.warning("⚠️ yt-dlp does not support this URL directly. Triggering fallback to browser automation...")
              start_selenium_process(video_url)
-             return # Stop further execution in this function
+             return
         st.warning(f"Could not extract a direct streamable link. Error: {e.stderr.strip()}")
 
     st.markdown("---")
-    
-    # --- Step 2: Add a button for the user to start the full download ---
-    st.write("To get the complete, merged video file, start the full download process.")
+    st.write("To get the complete, merged file, start the full download process.")
     if st.button("Start Full Download & Merge with yt-dlp", type="primary"):
-        run_full_yt_dlp_download(video_url)
+        run_full_yt_dlp_download(video_url, format_selector)
 
-def run_full_yt_dlp_download(video_url: str):
+def run_full_yt_dlp_download(video_url: str, format_selector: str):
     """
-    This function runs the main yt-dlp download and merge process.
-    It is called only when the user clicks the corresponding button.
+    This function runs the main yt-dlp download process.
     """
     temp_dir = "temp_downloads"
     if not os.path.exists(temp_dir):
         os.makedirs(temp_dir)
-        
+
     output_template = os.path.join(temp_dir, "%(title)s - %(id)s.%(ext)s")
-    
+
     command = [
-        "yt-dlp", "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-        "--merge-output-format", "mp4",
+        "yt-dlp", "-f", format_selector,
+        "--merge-output-format", "mp4", # yt-dlp handles audio-only cases gracefully
         "-o", output_template, video_url
     ]
-    
+
     log_area = st.expander("Show Full Download Logs", expanded=True)
-    unsupported_url_error = False
-    
-    with st.spinner("yt-dlp is running... Merging video and audio streams."):
+    with st.spinner("yt-dlp is running... This may involve downloading and merging files."):
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, encoding='utf-8')
-        
         for line in iter(process.stdout.readline, ""):
             log_area.text(line.strip())
-            if "Unsupported URL" in line or "Falling back on generic information extractor" in line:
-                unsupported_url_error = True
-        
         process.wait()
-    
+
     if process.returncode == 0:
-        st.success("✅ Full file download and merge complete!")
+        st.success("✅ Full file download complete!")
         try:
-            # Find the most recently created file in the temp directory
             downloaded_file = max([os.path.join(temp_dir, f) for f in os.listdir(temp_dir)], key=os.path.getctime)
             file_name = os.path.basename(downloaded_file)
 
             with open(downloaded_file, "rb") as fp:
-                video_bytes = io.BytesIO(fp.read())
-            
-            display_download_button(file_name, video_bytes, "Download merged file")
-            
-            # Clean up the downloaded file
+                media_bytes = io.BytesIO(fp.read())
+
+            # --- MODIFIED: display_download_button handles the MIME type ---
+            display_download_button(file_name, media_bytes, "Download File")
             os.remove(downloaded_file)
+
         except (ValueError, FileNotFoundError):
             st.error("Could not find the downloaded file after processing.")
     else:
-        if unsupported_url_error:
-            st.warning("⚠️ yt-dlp failed because the URL is unsupported. Trying the Selenium fallback method.")
-            start_selenium_process(video_url)
-        else:
-            st.error("❌ yt-dlp failed. See full logs above for details.")
+        st.error("❌ yt-dlp failed. See full logs above for details.")
+        st.info("You could try the Selenium fallback if it wasn't triggered automatically.")
+
 
 # --- Main App ---
 def main():
-    st.set_page_config(page_title="Hybrid Video Downloader", page_icon="🦾", layout="centered")
-    st.title("Hybrid Universal Video Downloader")
-    
+    st.set_page_config(page_title="Hybrid Media Downloader", page_icon="🎧", layout="centered")
+    st.title("Hybrid Universal Media Downloader")
+    st.markdown("Now with support for both **video** and **audio** files!")
+
     with st.expander("How this works"):
         st.markdown("""
-        This app gives you control over the download process.
-        1.  **Analyze URL:** First, it analyzes the URL with `yt-dlp` to find streamable links.
-        2.  **User-Triggered Download:** It then waits for you to click a button to start the actual download.
-            - **Fast Method (`yt-dlp`):** For supported sites (like SRF), you can click to start the full download and merge process.
-            - **Fallback Method (`Selenium`):** If `yt-dlp` fails (like with Nanoo.tv), it automatically tries to find a video link using a background browser. You then get a final button to download from that link.
+        This app gives you control over the download process for video and audio.
+        1.  **Analyze URL:** It first analyzes the URL with `yt-dlp`, which can now find video and audio streams (like `.mp3` from radio pages).
+        2.  **User-Triggered Download:** It then waits for you.
+            - **Fast Method (`yt-dlp`):** For most sites (like SRF), you can start the full, high-quality download.
+            - **Fallback Method (`Selenium`):** If `yt-dlp` can't handle the URL, it automatically uses a background browser to find `.mp4` or `.mp3` links, which you can then download.
         """)
-
-    url_input = st.text_input("Enter Video Page URL:", value="https://www.srf.ch/play/tv/redirect/detail/5b477667-1d20-414d-8ab0-2d0f6ac565a1")
-    st.caption("Tip: For SRF, use the '.../redirect/detail/...' URL, not the '.../embed?urn=...' one.")
     
+    # Add the new audio URL as a selectable example
+    url_examples = {
+        "SRF Video": "https://www.srf.ch/play/tv/redirect/detail/5b477667-1d20-414d-8ab0-2d0f6ac565a1",
+        "SRF Radio (Audio)": "https://www.srf.ch/play/radio/redirect/detail/17b705a0-4113-41d0-aa00-d0f3f2205f5f",
+    }
+    selected_example = st.radio("Choose an example URL:", list(url_examples.keys()), horizontal=True)
+    url_input = st.text_input("Or enter any Video/Audio Page URL:", value=url_examples[selected_example])
+
     if st.button("Fetch Data from URL", type="primary"):
         if url_input:
-            # The main function now just starts the initial data fetching
             fetch_data_with_yt_dlp(url_input)
         else:
             st.warning("Please enter a URL.")
