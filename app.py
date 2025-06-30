@@ -1,180 +1,117 @@
 import streamlit as st
-import requests
-import re
-import json
-import time
+import subprocess
 import os
 import io
-from urllib.parse import urlparse
 
-# This needs to be imported to use Selenium
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service as ChromeService
-from selenium.webdriver.chrome.options import Options
-
-def get_video_info_selenium_cloud(nanoo_url: str) -> dict:
+def download_video_with_yt_dlp(video_url: str):
     """
-    Uses Selenium in a Streamlit Cloud-optimized configuration to find the .mp4 URL.
-    This function launches a headless Chrome browser in the background.
+    Uses the powerful yt-dlp library to download video from a given URL.
+    This function will show the download progress in the Streamlit interface.
 
     Args:
-        nanoo_url (str): The URL of the nanoo.tv page.
-
-    Returns:
-        dict: A dictionary containing video information or an error message.
+        video_url (str): The URL of the video page to download.
     """
-    status_widget = st.empty()
-    try:
-        status_widget.info("🚀 Initializing a virtual browser in the cloud...")
+    st.write("🚀 Starting video download process...")
+    
+    # Define a temporary path for the downloaded file
+    # We use a sub-directory to keep things tidy.
+    temp_dir = "temp_downloads"
+    if not os.path.exists(temp_dir):
+        os.makedirs(temp_dir)
         
-        chrome_options = Options()
-        chrome_options.add_argument("--headless")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--disable-gpu")
+    # We'll use the video's ID as the filename to avoid special characters
+    output_template = os.path.join(temp_dir, "%(id)s.%(ext)s")
+    
+    # Construct the yt-dlp command
+    # -o: specifies the output template
+    # -f 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best': tells yt-dlp to find the best quality MP4 video and audio, or the best single MP4 file if separate streams aren't available.
+    command = [
+        "yt-dlp",
+        "-f",
+        "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "--merge-output-format", "mp4",
+        "-o", output_template,
+        video_url
+    ]
+    
+    st.markdown("**Executing Command:**")
+    st.code(" ".join(command))
+    
+    progress_bar_placeholder = st.empty()
+    status_text_placeholder = st.empty()
+    
+    # Run the command as a subprocess
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
+    
+    # Read the output line by line to show progress
+    for line in iter(process.stdout.readline, ""):
+        st.text(line.strip()) # Show the raw output from yt-dlp
+        if "[download]" in line and "%" in line:
+            try:
+                # Extract percentage from yt-dlp's output
+                progress_str = line.split('%')[0].split()[-1]
+                progress = int(float(progress_str))
+                progress_bar_placeholder.progress(progress)
+                status_text_placeholder.info(f"Downloading... {progress}%")
+            except (ValueError, IndexError):
+                # Ignore lines that don't have a clear percentage
+                pass
+    
+    process.wait() # Wait for the download to complete
+    
+    if process.returncode == 0:
+        status_text_placeholder.success("✅ Download and processing complete!")
         
-        # Add a unique user data directory for each run to prevent session conflicts
-        chrome_options.add_argument(f"--user-data-dir=/tmp/selenium_{int(time.time())}")
-        
-        # Enable performance logging to capture network requests
-        chrome_options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
-        
-        status_widget.info("🌍 Opening browser and navigating to URL...")
-        
-        # In Streamlit Cloud, Chromium is installed via packages.txt.
-        # We can specify the service to be more robust.
-        service = ChromeService(executable_path="/usr/bin/chromedriver")
-        with webdriver.Chrome(service=service, options=chrome_options) as driver:
-            driver.get(nanoo_url)
+        # Find the downloaded file
+        try:
+            downloaded_file = max([os.path.join(temp_dir, f) for f in os.listdir(temp_dir)], key=os.path.getctime)
+            file_name = os.path.basename(downloaded_file)
 
-            # Wait for the page to load and network requests to fire.
-            time.sleep(10) 
-            
-            status_widget.info("🕵️‍♂️ Analyzing network traffic for video files...")
-            logs = driver.get_log("performance")
+            st.markdown("---")
+            st.write("Your video is ready for download:")
 
-        status_widget.empty()  # Clear status message
+            with open(downloaded_file, "rb") as fp:
+                st.download_button(
+                    label=f"⬇️ Download {file_name}",
+                    data=fp,
+                    file_name=file_name,
+                    mime="video/mp4"
+                )
+            # Clean up the temp file
+            os.remove(downloaded_file)
+        except (ValueError, FileNotFoundError):
+             st.error("Could not find the downloaded file after processing.")
 
-        stream_url = None
-        for entry in logs:
-            log = json.loads(entry["message"])["message"]
-            if (
-                log.get("method") == "Network.responseReceived"
-                and "params" in log
-                and "response" in log["params"]
-                and "url" in log["params"]["response"]
-                # --- FIX APPLIED HERE ---
-                # Make the search more generic to catch different quality streams (e.g., _hi, _hd, _lo)
-                and "_stream_" in log["params"]["response"]["url"]
-                and ".mp4" in log["params"]["response"]["url"]
-            ):
-                stream_url = log["params"]["response"]["url"]
-                # We take the first one we find
-                break
-        
-        if stream_url:
-            # Try to extract a video ID for a clean filename
-            video_id_match = re.search(r'/(\d+)_stream', urlparse(stream_url).path)
-            video_id = video_id_match.group(1) if video_id_match else "video"
-            
-            return {
-                "status": "success",
-                "stream_url": stream_url.replace("&amp;", "&"), # Sanitize URL
-                "video_id": video_id,
-                "message": "✅ Direct video stream found!"
-            }
-        else:
-            return {
-                "status": "error",
-                "message": "❌ Could not find an .mp4 stream in the network traffic. The site may have changed its video delivery method."
-            }
-
-    except Exception as e:
-        status_widget.empty()
-        st.error("An error occurred during browser automation.")
-        st.code(str(e), language="text")
-        return {
-            "status": "error",
-            "message": "Browser automation failed."
-        }
+    else:
+        status_text_placeholder.error("❌ An error occurred during the download process. See logs above for details.")
 
 
 def main():
     """
     Main function to run the Streamlit application.
     """
-    st.set_page_config(page_title="Cloud Video Downloader", page_icon="☁️", layout="centered")
+    st.set_page_config(page_title="Universal Video Downloader", page_icon="💾", layout="centered")
 
-    st.title("Cloud-Ready Video Downloader")
-    st.write("This app uses browser automation in the cloud to extract direct video links.")
+    st.title("Universal Video Downloader")
+    st.write("This app uses the powerful `yt-dlp` library to download videos from a wide variety of websites, including those using M3U8 streams.")
 
-    with st.expander("Instructions & Disclaimer"):
+    with st.expander("Instructions & Supported Sites"):
         st.markdown("""
-        1.  **Paste URL** and click **"Extract Video Link"**.
-        2.  **Be Patient:** The app launches a browser in the background. This can take 15-30 seconds.
-        3.  **Download:** If a link is found, a download button will appear. The video will be downloaded to the server and then provided to you.
+        1.  **Paste URL:** Enter the URL of the page containing the video (e.g., the SRF Play page, a YouTube link, etc.).
+        2.  **Click Download:** The app will call `yt-dlp` in the background. You will see the live output from the tool.
+        3.  **Be Patient:** Downloading and merging video can take several minutes depending on the video length and quality.
+        4.  **Save:** Once complete, a download button for the final `.mp4` file will appear.
         
-        **Disclaimer:** This tool is for educational purposes. Please ensure you have the right to download the content before proceeding.
+        This tool supports hundreds of websites. You can check the full list on the [yt-dlp supported sites page](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md).
         """)
 
-    # Initialize session state to hold video info
-    if "video_info" not in st.session_state:
-        st.session_state.video_info = None
+    url_input = st.text_input("Enter the video page URL:", value="https://www.srf.ch/play/embed?urn=urn:srf:video:5b477667-1d20-414d-8ab0-2d0f6ac565a1")
 
-    url_input = st.text_input("Enter the video page URL:", value="https://www.nanoo.tv/link/w/PrzEXXhn")
-
-    if st.button("Extract Video Link", type="primary"):
+    if st.button("Download Video", type="primary"):
         if url_input:
-            # Clear previous results and run the extraction
-            st.session_state.video_info = None
-            st.session_state.video_info = get_video_info_selenium_cloud(url_input)
+            download_video_with_yt_dlp(url_input)
         else:
             st.warning("Please enter a URL.")
-
-    # --- Display results and download button AFTER extraction ---
-    if st.session_state.video_info:
-        video_info = st.session_state.video_info
-        st.markdown("---")
-
-        if video_info.get("status") == "success":
-            st.success(video_info["message"])
-            st.markdown(f"**Video ID:** `{video_info['video_id']}`")
-            st.markdown("**Found Stream Link:**")
-            st.code(video_info['stream_url'], language='text')
-
-            st.write("Click the button below to download the video.")
-            
-            file_name = f"video_{video_info['video_id']}.mp4"
-            
-            # Download the video content into an in-memory buffer when the button is pressed
-            with st.spinner(f"Preparing '{file_name}' for download..."):
-                try:
-                    headers = {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                        'Referer': 'https://www.nanoo.tv/'
-                    }
-                    response = requests.get(video_info['stream_url'], headers=headers, stream=True, timeout=30)
-                    response.raise_for_status()
-                    
-                    # Use an in-memory bytes buffer
-                    video_bytes = io.BytesIO()
-                    for chunk in response.iter_content(chunk_size=8192):
-                        video_bytes.write(chunk)
-                    video_bytes.seek(0)
-
-                    st.download_button(
-                        label=f"⬇️ Download {file_name}",
-                        data=video_bytes,
-                        file_name=file_name,
-                        mime="video/mp4",
-                    )
-                except requests.exceptions.RequestException as e:
-                    st.error(f"Download failed: {e}")
-                except Exception as e:
-                    st.error(f"An error occurred while preparing the download: {e}")
-
-        else:
-            st.error(video_info["message"])
 
 if __name__ == "__main__":
     main()
