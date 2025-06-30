@@ -13,10 +13,23 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.chrome.options import Options
 
+# --- Sanitization Function ---
+def sanitize_and_extract_url(input_text: str) -> str:
+    """
+    Extracts the URL from an iframe embed code or returns the input if it's already a URL.
+    """
+    # Use regex to find the src attribute in an iframe tag
+    match = re.search(r'<iframe.*?src="([^"]+)"', input_text)
+    if match:
+        # If a match is found, return the extracted URL
+        st.info("Iframe detected. Extracted the source URL for you.")
+        return match.group(1)
+    # Otherwise, assume it's a direct URL and strip any whitespace
+    return input_text.strip()
+
 # --- Helper function to display the final download button ---
 def display_download_button(file_name: str, data: io.BytesIO, label: str):
     """Creates the download button for the user with the correct MIME type."""
-    # Determine MIME type from file extension
     file_ext = os.path.splitext(file_name)[1].lower()
     mime_types = {
         '.mp4': 'video/mp4',
@@ -25,7 +38,7 @@ def display_download_button(file_name: str, data: io.BytesIO, label: str):
         '.webm': 'video/webm',
         '.ogg': 'audio/ogg'
     }
-    mime = mime_types.get(file_ext, 'application/octet-stream') # Fallback
+    mime = mime_types.get(file_ext, 'application/octet-stream')
 
     st.download_button(
         label=f"⬇️ {label}: {file_name}",
@@ -64,7 +77,6 @@ def start_selenium_process(url: str):
         status_widget.empty()
 
         stream_url = None
-        # --- MODIFIED: Updated regex to find .mp4 and .mp3 files ---
         stream_pattern = re.compile(r'https?://.*(?:_stream_|/videos?/|/audio/|manifest|media).*?\.(?:mp4|mp3)(?:[?&].*)?$', re.IGNORECASE)
 
         for entry in logs:
@@ -97,13 +109,12 @@ def start_selenium_process(url: str):
 def download_from_direct_link(stream_url: str):
     """Helper function to download from a direct link when a button is pressed."""
     try:
-        # Sanitize filename from URL
         file_name = os.path.basename(urlparse(stream_url).path)
         if not file_name:
             file_ext = ".mp3" if ".mp3" in stream_url else ".mp4"
             file_name = f"media_file_{int(time.time())}{file_ext}"
 
-        with st.spinner(f"Downloading '{file_name}'... This may take a moment."):
+        with st.spinner(f"Downloading '{file_name}'..."):
             response = requests.get(stream_url, stream=True, timeout=60)
             response.raise_for_status()
 
@@ -112,7 +123,6 @@ def download_from_direct_link(stream_url: str):
                 media_bytes.write(chunk)
             media_bytes.seek(0)
 
-            # --- MODIFIED: display_download_button now handles MIME types ---
             display_download_button(file_name, media_bytes, "Download File")
 
     except requests.exceptions.RequestException as e:
@@ -127,8 +137,6 @@ def fetch_data_with_yt_dlp(video_url: str):
     video and audio files.
     """
     st.info("🚀 Using yt-dlp to analyze the URL...")
-
-    # --- MODIFIED: Format selection is now more inclusive of audio formats ---
     format_selector = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/bestaudio/best"
 
     try:
@@ -156,23 +164,20 @@ def fetch_data_with_yt_dlp(video_url: str):
         run_full_yt_dlp_download(video_url, format_selector)
 
 def run_full_yt_dlp_download(video_url: str, format_selector: str):
-    """
-    This function runs the main yt-dlp download process.
-    """
+    """This function runs the main yt-dlp download process."""
     temp_dir = "temp_downloads"
     if not os.path.exists(temp_dir):
         os.makedirs(temp_dir)
 
     output_template = os.path.join(temp_dir, "%(title)s - %(id)s.%(ext)s")
-
     command = [
         "yt-dlp", "-f", format_selector,
-        "--merge-output-format", "mp4", # yt-dlp handles audio-only cases gracefully
+        "--merge-output-format", "mp4",
         "-o", output_template, video_url
     ]
 
     log_area = st.expander("Show Full Download Logs", expanded=True)
-    with st.spinner("yt-dlp is running... This may involve downloading and merging files."):
+    with st.spinner("yt-dlp is running..."):
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, encoding='utf-8')
         for line in iter(process.stdout.readline, ""):
             log_area.text(line.strip())
@@ -183,49 +188,66 @@ def run_full_yt_dlp_download(video_url: str, format_selector: str):
         try:
             downloaded_file = max([os.path.join(temp_dir, f) for f in os.listdir(temp_dir)], key=os.path.getctime)
             file_name = os.path.basename(downloaded_file)
-
             with open(downloaded_file, "rb") as fp:
                 media_bytes = io.BytesIO(fp.read())
-
-            # --- MODIFIED: display_download_button handles the MIME type ---
             display_download_button(file_name, media_bytes, "Download File")
             os.remove(downloaded_file)
-
         except (ValueError, FileNotFoundError):
             st.error("Could not find the downloaded file after processing.")
     else:
         st.error("❌ yt-dlp failed. See full logs above for details.")
-        st.info("You could try the Selenium fallback if it wasn't triggered automatically.")
-
 
 # --- Main App ---
 def main():
-    st.set_page_config(page_title="Hybrid Media Downloader", page_icon="🎧", layout="centered")
+    st.set_page_config(page_title="Hybrid Media Downloader", page_icon="🔗", layout="centered")
     st.title("Hybrid Universal Media Downloader")
-    st.markdown("Now with support for both **video** and **audio** files!")
+    st.markdown("Supports **video**, **audio**, and tricky sites like **Nanoo.tv**.")
 
-    with st.expander("How this works"):
+    # --- NEW: How-To Guide ---
+    with st.expander("📖 How to Get the Right Link (Click to Open)"):
+        st.subheader("Nanoo.tv")
         st.markdown("""
-        This app gives you control over the download process for video and audio.
-        1.  **Analyze URL:** It first analyzes the URL with `yt-dlp`, which can now find video and audio streams (like `.mp3` from radio pages).
-        2.  **User-Triggered Download:** It then waits for you.
-            - **Fast Method (`yt-dlp`):** For most sites (like SRF), you can start the full, high-quality download.
-            - **Fallback Method (`Selenium`):** If `yt-dlp` can't handle the URL, it automatically uses a background browser to find `.mp4` or `.mp3` links, which you can then download.
+        1.  Go to the Nanoo.tv video you want to download.
+        2.  Click the **"Share"** button below the video player.
+        3.  A shareable link will be generated. Copy this link.
+        4.  Paste the link into the input box below.
         """)
-    
-    # Add the new audio URL as a selectable example
+        
+        st.subheader("SRF Video")
+        st.markdown("""
+        1.  Go to the SRF video page.
+        2.  Click the **"Teilen"** (Share) icon, usually in the top right.
+        3.  In the popup, click the **"Link"** icon to copy the direct URL.
+        4.  Paste the link below. It should look like `https://www.srf.ch/play/tv/...`
+        """)
+
+        st.subheader("SRF Audio / Radio")
+        st.markdown("""
+        1.  Go to the SRF audio page.
+        2.  Click the **"Teilen"** (Share) icon.
+        3.  In the popup, copy the **Embed Code**. It will start with `<iframe...`.
+        4.  **Paste the entire `<iframe>` code below.** The app will automatically find and use the correct URL from it.
+        """)
+
+    # --- UPDATED: URL Examples ---
     url_examples = {
         "SRF Video": "https://www.srf.ch/play/tv/redirect/detail/5b477667-1d20-414d-8ab0-2d0f6ac565a1",
-        "SRF Radio (Audio)": "https://www.srf.ch/play/radio/redirect/detail/17b705a0-4113-41d0-aa00-d0f3f2205f5f",
+        "SRF Audio (Embed Code)": '<iframe width="560" height="315" src="https://www.srf.ch/play/embed?urn=urn:srf:audio:17b705a0-4113-41d0-aa00-d0f3f2205f5f&subdivisions=false" allowfullscreen allow="geolocation *; autoplay; encrypted-media"></iframe>',
+        "Nanoo.tv (Example)": "https://nanoo.tv/link/example-placeholder",
     }
-    selected_example = st.radio("Choose an example URL:", list(url_examples.keys()), horizontal=True)
-    url_input = st.text_input("Or enter any Video/Audio Page URL:", value=url_examples[selected_example])
+    selected_example = st.radio("Choose an example:", list(url_examples.keys()), horizontal=True, key="examples")
+    url_input = st.text_input("Or paste any URL or Embed Code here:", value=url_examples[selected_example])
 
     if st.button("Fetch Data from URL", type="primary"):
         if url_input:
-            fetch_data_with_yt_dlp(url_input)
+            # --- NEW: Sanitize the input first ---
+            sanitized_url = sanitize_and_extract_url(url_input)
+            if sanitized_url:
+                fetch_data_with_yt_dlp(sanitized_url)
+            else:
+                st.error("Could not extract a valid URL from the provided input.")
         else:
-            st.warning("Please enter a URL.")
+            st.warning("Please paste a URL or embed code.")
 
 if __name__ == "__main__":
     main()
