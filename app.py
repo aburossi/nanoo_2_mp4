@@ -105,28 +105,22 @@ def download_with_yt_dlp(video_url: str):
         
     output_template = os.path.join(temp_dir, "%(title)s.%(ext)s")
     
+    # Reverted to the stable command without YouTube-specific arguments
     command = [
         "yt-dlp",
         "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "--merge-output-format", "mp4",
-        # --- FIX APPLIED HERE ---
-        # The Android client is blocked. We now pretend to be a TV client,
-        # which is often less restricted.
-        "--extractor-args", "youtube:player_client=tv",
-        # ------------------------
         "-o", output_template,
         video_url
     ]
     
     log_area = st.expander("Show yt-dlp Logs", expanded=True)
-    full_log = ""
     unsupported_url_error = False
 
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, encoding='utf-8')
     
     for line in iter(process.stdout.readline, ""):
         log_area.text(line.strip())
-        full_log += line
         # Check for the specific error that indicates we should fall back
         if "Unsupported URL" in line or "Falling back on generic information extractor" in line:
             unsupported_url_error = True
@@ -167,11 +161,11 @@ def main():
     with st.expander("How this works"):
         st.markdown("""
         This app combines two methods to maximize success:
-        1.  **Fast Method (`yt-dlp`):** It first tries to download using `yt-dlp`. For sites like YouTube that may block server requests, it pretends to be a TV app to improve reliability.
-        2.  **Fallback Method (`Selenium`):** If the fast method fails (like with Nanoo.tv), it automatically launches a virtual browser in the background to find the video link, just like a human user.
+        1.  **Fast Method (`yt-dlp`):** It first tries to download using `yt-dlp`, which is very fast for supported sites (like SRF).
+        2.  **Fallback Method (`Selenium`):** If the fast method fails (like with Nanoo.tv), it automatically launches a virtual browser in the background to find the video link.
         """)
 
-    url_input = st.text_input("Enter Video Page URL:", value="https://www.youtube.com/watch?v=0tQJsKGrNAw")
+    url_input = st.text_input("Enter Video Page URL:", value="https://www.srf.ch/play/tv/redirect/detail/5b477667-1d20-414d-8ab0-2d0f6ac565a1")
     st.caption("Tip: For SRF, use the '.../redirect/detail/...' URL, not the '.../embed?urn=...' one.")
     
     if st.button("Download Video", type="primary"):
