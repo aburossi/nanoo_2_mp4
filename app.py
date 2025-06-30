@@ -1,73 +1,144 @@
 import streamlit as st
 import requests
-from bs4 import BeautifulSoup
 import re
+from urllib.parse import urlparse, parse_qs
 
-# Function to extract the video URL from the Nanoo.tv page
-def get_video_url(page_url):
+def get_video_info(nanoo_url):
+    """
+    This function takes a nanoo.tv URL and attempts to extract the
+    underlying video stream URL and other relevant information.
+
+    Args:
+        nanoo_url (str): The URL of the nanoo.tv page.
+
+    Returns:
+        dict: A dictionary containing video information or an error.
+    """
     try:
-        # Fetch the page content
-        response = requests.get(page_url)
-        response.raise_for_status()
+        # Fetch the HTML content of the page
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36'
+        }
+        response = requests.get(nanoo_url, headers=headers, timeout=15)
+        response.raise_for_status()  # Raise an exception for bad status codes
+        html_content = response.text
 
-        # Parse the HTML content
-        soup = BeautifulSoup(response.content, 'html.parser')
+        # Use regex to find potential stream URLs within the HTML
+        # This pattern looks for URLs ending in .mp4 with query parameters
+        stream_url_match = re.search(r'(https?://[^\s"\']+\.mp4\?[^\s"\']+)', html_content)
 
-        # Search for any mp4 file in the HTML
-        # Use a regex to match .mp4 URLs with possible tokens
-        mp4_pattern = re.compile(r'https:\/\/http\.nanoo\.tv\/mediacontent\/export\/\d+\/\d+_stream_hi\.mp4\?st=[a-zA-Z0-9]+&e=\d+')
-        script_tags = soup.find_all('script')
+        if stream_url_match:
+            stream_url = stream_url_match.group(1)
+            # Let's try to make the URL cleaner and more generic if possible
+            parsed_url = urlparse(stream_url)
+            query_params = parse_qs(parsed_url.query)
 
-        # Search through all script tags to find the video link
-        for script in script_tags:
-            if script.string:
-                video_url_match = mp4_pattern.search(script.string)
-                if video_url_match:
-                    return video_url_match.group(0)  # Return the first match
+            # Extract key information (these might change over time)
+            video_id_match = re.search(r'/(\d+)_stream', parsed_url.path)
+            video_id = video_id_match.group(1) if video_id_match else "Unknown"
 
-        # If no match is found, return None
-        return None
-
-    except Exception as e:
-        st.error(f"Error occurred: {e}")
-        return None
-
-# Streamlit UI to accept user input
-st.title('Nanoo.tv Video Downloader')
-
-# Input field for Nanoo.tv video page URL
-page_url = st.text_input('Enter Nanoo.tv video page URL', '')
-
-if st.button('Find and Download MP4'):
-    if page_url:
-        # Fetch the correct video URL
-        video_url = get_video_url(page_url)
-        
-        if video_url:
-            st.success(f"Found video URL: {video_url}")
-
-            # Offer to download the video
-            try:
-                response = requests.get(video_url, stream=True)
-                video_path = "/tmp/video.mp4"
-                
-                # Save the video file
-                with open(video_path, 'wb') as video_file:
-                    for chunk in response.iter_content(chunk_size=1024):
-                        if chunk:
-                            video_file.write(chunk)
-
-                # Provide a download button for the user
-                with open(video_path, 'rb') as file:
-                    st.download_button(
-                        label="Download MP4",
-                        data=file,
-                        file_name="video.mp4",
-                        mime="video/mp4"
-                    )
-            except Exception as e:
-                st.error(f"Error downloading video: {e}")
+            return {
+                "status": "success",
+                "original_url": nanoo_url,
+                "stream_url": stream_url,
+                "video_id": video_id,
+                "message": "Direkter Videostream gefunden!"
+            }
         else:
-            st.error("Could not find the video URL.")
+            return {
+                "status": "error",
+                "message": "Konnte keinen direkten .mp4-Stream auf der Seite finden. Die Methode zum Einbetten hat sich möglicherweise geändert."
+            }
+
+    except requests.exceptions.RequestException as e:
+        return {
+            "status": "error",
+            "message": f"Fehler beim Abrufen der URL: {e}"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Ein unerwarteter Fehler ist aufgetreten: {e}"
+        }
+
+def download_video(url, filename):
+    """
+    Downloads a video from a URL and saves it locally.
+    Displays a progress bar in the Streamlit app.
+    """
+    try:
+        with st.spinner(f'"{filename}" wird heruntergeladen...'):
+            r = requests.get(url, stream=True)
+            r.raise_for_status()
+            total_size = int(r.headers.get('content-length', 0))
+            block_size = 1024  # 1 Kilobyte
+            progress_bar = st.progress(0)
+            written_bytes = 0
+            with open(filename, 'wb') as f:
+                for data in r.iter_content(block_size):
+                    written_bytes += len(data)
+                    f.write(data)
+                    progress = int((written_bytes / total_size) * 100)
+                    progress_bar.progress(progress)
+        st.success(f'Video "{filename}" erfolgreich heruntergeladen!')
+        return True
+    except requests.exceptions.RequestException as e:
+        st.error(f"Download-Fehler: {e}")
+        return False
+    except Exception as e:
+        st.error(f"Ein Fehler ist beim Speichern der Datei aufgetreten: {e}")
+        return False
+
+# --- Streamlit App UI ---
+st.set_page_config(page_title="Nanoo Video Downloader", page_icon="⬇️", layout="centered")
+
+st.title("Nanoo.tv Video Downloader")
+st.write("""
+Geben Sie eine nanoo.tv-Video-URL ein, um den direkten `.mp4`-Link zu finden und das Video herunterzuladen.
+**Hinweis:** Dies funktioniert, indem der Seiteninhalt analysiert wird. Wenn nanoo.tv seine Website ändert, funktioniert dies möglicherweise nicht mehr.
+""")
+
+# --- Instructions ---
+with st.expander("Wie es funktioniert und rechtliche Hinweise"):
+    st.markdown("""
+    1.  **URL einfügen:** Fügen Sie die vollständige URL der nanoo.tv-Seite mit dem Video ein (z. B. `https://www.nanoo.tv/link/w/...`).
+    2.  **Link extrahieren:** Die App lädt den HTML-Code der Seite und sucht nach einer URL, die auf `.mp4` endet. Dies ist wahrscheinlich der temporäre Stream-Link.
+    3.  **Herunterladen:** Wenn ein Link gefunden wird, können Sie versuchen, das Video direkt herunterzuladen.
+
+    **Wichtiger rechtlicher Hinweis:** Bitte stellen Sie sicher, dass Sie die Erlaubnis des Rechteinhabers haben, bevor Sie Videos herunterladen. Das Herunterladen von urheberrechtlich geschütztem Material ohne Genehmigung kann illegal sein. Dieses Tool ist für Bildungszwecke und für das Herunterladen Ihrer eigenen Inhalte oder von Inhalten, für die Sie eine Berechtigung haben, gedacht.
+    """)
+
+# --- Main App Logic ---
+url_input = st.text_input("Nanoo.tv Video-URL eingeben:", "https://www.nanoo.tv/link/w/PrzEXXhn")
+
+if st.button("Download-Link extrahieren"):
+    if url_input:
+        with st.spinner("Analysiere URL..."):
+            video_info = get_video_info(url_input)
+
+            if video_info["status"] == "success":
+                st.success(video_info["message"])
+                st.session_state.video_info = video_info # Store info in session state
+
+                st.markdown(f"**Video-ID:** `{video_info['video_id']}`")
+                st.markdown("**Gefundener Stream-Link:**")
+                st.code(video_info['stream_url'], language='text')
+
+            else:
+                st.error(video_info["message"])
+                st.session_state.video_info = None
     else:
-        st.warning("Please enter a valid Nanoo.tv video page URL.")
+        st.warning("Bitte geben Sie eine URL ein.")
+
+# --- Download Button ---
+# Check if video_info is in session state before showing the download button
+if 'video_info' in st.session_state and st.session_state.video_info:
+    video_info = st.session_state.video_info
+    st.markdown("---")
+    st.write("Möchten Sie versuchen, dieses Video jetzt herunterzuladen?")
+    
+    file_name = f"nanoo_video_{video_info['video_id']}.mp4"
+    
+    if st.button(f"Herunterladen als {file_name}"):
+        download_video(video_info['stream_url'], file_name)
+
