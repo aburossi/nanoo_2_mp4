@@ -63,8 +63,10 @@ def get_video_info_selenium_cloud(nanoo_url: str) -> dict:
                 and "params" in log
                 and "response" in log["params"]
                 and "url" in log["params"]["response"]
-                # Look for the specific video stream URL pattern
-                and "_stream_hd.mp4" in log["params"]["response"]["url"]
+                # --- FIX APPLIED HERE ---
+                # Make the search more generic to catch different quality streams (e.g., _hi, _hd, _lo)
+                and "_stream_" in log["params"]["response"]["url"]
+                and ".mp4" in log["params"]["response"]["url"]
             ):
                 stream_url = log["params"]["response"]["url"]
                 # We take the first one we find
