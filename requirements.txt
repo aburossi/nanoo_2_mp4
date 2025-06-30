@@ -2,3 +2,4 @@ streamlit
 requests
 selenium
 webdriver-manager
+yt-dlp
