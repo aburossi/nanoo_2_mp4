@@ -6,6 +6,7 @@ import re
 import json
 import time
 from urllib.parse import urlparse
+import requests # <-- THE MISSING LINE IS ADDED HERE
 
 # --- Selenium Imports ---
 from selenium import webdriver
