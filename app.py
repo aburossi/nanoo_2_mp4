@@ -192,30 +192,16 @@ def main():
         st.session_state.stream_urls = ""
         st.session_state.download_info = {}
 
-    # --- How-To Guide ---
-    with st.expander("📖 How to Get the Right Link (Click to Open)"):
-        # (Guide content remains the same)
+    # --- UPDATED: How-To Guide with Images ---
+    with st.expander("📖 How to Get the Right Link (Visual Guide)"):
         st.subheader("Nanoo.tv")
-        st.markdown("""
-        1.  Go to the Nanoo.tv video you want to download.
-        2.  Click the **"Share"** button below the video player.
-        3.  A shareable link will be generated. Copy this link.
-        4.  Paste the link into the input box below.
-        """)
+        st.image("nanoo.png", caption="1. Click 'Share', 2. Copy the generated link.")
+        
         st.subheader("SRF Video")
-        st.markdown("""
-        1.  Go to the SRF video page.
-        2.  Click the **"Teilen"** (Share) icon, usually in the top right.
-        3.  In the popup, click the **"Link"** icon to copy the direct URL.
-        4.  Paste the link below. It should look like `https://www.srf.ch/play/tv/...`
-        """)
+        st.image("srf-video.png", caption="1. Click 'Teilen' (Share), 2. Click the 'Link' icon to copy.")
+
         st.subheader("SRF Audio / Radio")
-        st.markdown("""
-        1.  Go to the SRF audio page.
-        2.  Click the **"Teilen"** (Share) icon.
-        3.  In the popup, copy the **Embed Code**. It will start with `<iframe...`.
-        4.  **Paste the entire `<iframe>` code below.** The app will automatically find and use the correct URL from it.
-        """)
+        st.image("srf-audio.png", caption="1. Click 'Teilen' (Share), 2. Copy the 'Embed Code'.")
 
     # --- URL Input ---
     url_examples = {
@@ -225,12 +211,10 @@ def main():
     }
     selected_example = st.radio("Choose an example:", list(url_examples.keys()), horizontal=True, key="examples")
     
-    # Use a different key for the text input to avoid conflict
     url_input = st.text_input("Or paste any URL or Embed Code here:", value=url_examples[selected_example], key="url_input_box")
 
     if st.button("Fetch Data from URL", type="primary"):
         if url_input:
-            # Reset state for a new URL and start the process
             st.session_state.stage = "fetching"
             st.session_state.sanitized_url = sanitize_and_extract_url(url_input)
             st.session_state.stream_urls = ""
@@ -239,8 +223,6 @@ def main():
             st.warning("Please paste a URL or embed code.")
 
     # --- STATE MACHINE ---
-    # This part of the code runs based on the current stage stored in session_state
-    
     if st.session_state.stage == "fetching":
         fetch_data_with_yt_dlp(st.session_state.sanitized_url)
 
@@ -251,7 +233,7 @@ def main():
         st.write("To get the complete, merged file, click the button below.")
         if st.button("Start Full Download & Merge with yt-dlp", type="primary"):
             st.session_state.stage = "downloading"
-            st.experimental_rerun() # Rerun to show spinner immediately
+            st.experimental_rerun()
 
     if st.session_state.stage == "downloading":
         run_full_yt_dlp_download(st.session_state.sanitized_url)
