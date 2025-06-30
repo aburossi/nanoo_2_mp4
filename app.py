@@ -103,16 +103,16 @@ def download_with_yt_dlp(video_url: str):
     if not os.path.exists(temp_dir):
         os.makedirs(temp_dir)
         
-    output_template = os.path.join(temp_dir, "%(id)s.%(ext)s")
+    output_template = os.path.join(temp_dir, "%(title)s.%(ext)s")
     
     command = [
         "yt-dlp",
         "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "--merge-output-format", "mp4",
         # --- FIX APPLIED HERE ---
-        # Add extractor arguments to pretend we are an Android client for YouTube.
-        # This helps bypass 403 Forbidden errors.
-        "--extractor-args", "youtube:player_client=android",
+        # The Android client is blocked. We now pretend to be a TV client,
+        # which is often less restricted.
+        "--extractor-args", "youtube:player_client=tv",
         # ------------------------
         "-o", output_template,
         video_url
@@ -167,7 +167,7 @@ def main():
     with st.expander("How this works"):
         st.markdown("""
         This app combines two methods to maximize success:
-        1.  **Fast Method (`yt-dlp`):** It first tries to download using `yt-dlp`. For sites like YouTube that may block server requests, it pretends to be an Android app to improve reliability.
+        1.  **Fast Method (`yt-dlp`):** It first tries to download using `yt-dlp`. For sites like YouTube that may block server requests, it pretends to be a TV app to improve reliability.
         2.  **Fallback Method (`Selenium`):** If the fast method fails (like with Nanoo.tv), it automatically launches a virtual browser in the background to find the video link, just like a human user.
         """)
 
