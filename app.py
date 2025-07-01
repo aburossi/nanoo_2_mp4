@@ -105,93 +105,221 @@ def run_full_yt_dlp_download(url: str):
         st.error("❌ yt-dlp failed. See full logs above for details.")
         st.session_state.stage = 'initial'
 
-def try_alternative_extraction(url: str):
+def extract_nanoo_media_url(url: str):
     """
-    Alternative approach without Selenium - tries direct URL patterns and simple requests.
+    Extract media URL from Nanoo.tv by analyzing the page structure and making API calls.
     """
     status_widget = st.empty()
+    media_url = None
+    
     try:
-        status_widget.info("🔍 Trying alternative extraction methods...")
+        status_widget.info("🎯 Detected Nanoo.tv - extracting media URL...")
         
-        # Try to extract media URLs using different approaches
-        media_url = None
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+        }
         
-        # Method 1: Try to find common media patterns in the URL itself
-        if 'nanoo.tv' in url:
-            status_widget.info("🎯 Detected Nanoo.tv - trying direct extraction...")
-            # Try to get the page content and look for media URLs
-            try:
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-                }
-                response = requests.get(url, headers=headers, timeout=30)
-                response.raise_for_status()
-                
-                # Look for common video/audio patterns in the HTML
-                content = response.text
-                
-                # Common patterns for media URLs
-                patterns = [
-                    r'"(https?://[^"]*\.mp4[^"]*)"',
-                    r'"(https?://[^"]*\.mp3[^"]*)"',
-                    r'"(https?://[^"]*\.m4a[^"]*)"',
-                    r'"(https?://[^"]*\.webm[^"]*)"',
-                    r'src="([^"]*\.mp4[^"]*)"',
-                    r'src="([^"]*\.mp3[^"]*)"',
-                    r'data-src="([^"]*\.mp4[^"]*)"',
-                    r'video_url["\s]*:["\s]*"([^"]+)"',
-                    r'audio_url["\s]*:["\s]*"([^"]+)"',
-                ]
-                
-                for pattern in patterns:
-                    matches = re.findall(pattern, content, re.IGNORECASE)
-                    if matches:
-                        # Take the first match that looks like a complete URL
-                        for match in matches:
-                            if match.startswith('http') and ('stream' in match or 'media' in match or '.mp4' in match or '.mp3' in match):
-                                media_url = match
-                                break
+        # Step 1: Get the main page
+        status_widget.info("📡 Step 1: Loading Nanoo.tv page...")
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+        content = response.text
+        
+        # Step 2: Extract the media ID from the URL or page content
+        status_widget.info("🔍 Step 2: Extracting media ID...")
+        
+        # Try to extract ID from URL pattern: nanoo.tv/link/v/XXXXXXXX
+        media_id_match = re.search(r'/link/v/([a-zA-Z0-9]+)', url)
+        if media_id_match:
+            media_id = media_id_match.group(1)
+            st.info(f"Found media ID: {media_id}")
+        else:
+            # Try to find it in the page content
+            id_patterns = [
+                r'"mediaId"[:\s]*"([^"]+)"',
+                r'"id"[:\s]*"([a-zA-Z0-9]+)"',
+                r'data-media-id="([^"]+)"',
+                r'mediaId[:\s]*["\']([^"\']+)["\']',
+            ]
+            
+            for pattern in id_patterns:
+                match = re.search(pattern, content, re.IGNORECASE)
+                if match:
+                    media_id = match.group(1)
+                    break
+            else:
+                media_id = None
+        
+        if not media_id:
+            st.warning("Could not extract media ID from the page")
+            return None
+        
+        # Step 3: Look for API endpoints or direct media URLs in the page
+        status_widget.info("🔎 Step 3: Searching for media streams...")
+        
+        # Common patterns for Nanoo.tv media URLs
+        nanoo_patterns = [
+            r'"(https?://[^"]*nanoo\.tv[^"]*\.mp4[^"]*)"',
+            r'"(https?://[^"]*nanoo\.tv[^"]*stream[^"]*)"',
+            r'"(https?://http\.nanoo\.tv[^"]*\.mp4[^"]*)"',
+            r'"(https?://[^"]*mediacontent[^"]*\.mp4[^"]*)"',
+            r'src[:\s]*["\']([^"\']*nanoo\.tv[^"\']*\.mp4[^"\']*)["\']',
+            r'url[:\s]*["\']([^"\']*stream[^"\']*\.mp4[^"\']*)["\']',
+        ]
+        
+        for pattern in nanoo_patterns:
+            matches = re.findall(pattern, content, re.IGNORECASE)
+            if matches:
+                for match in matches:
+                    if '.mp4' in match and ('stream' in match or 'nanoo.tv' in match):
+                        media_url = match
+                        break
+                if media_url:
+                    break
+        
+        # Step 4: If no direct URL found, try to construct API calls
+        if not media_url:
+            status_widget.info("🌐 Step 4: Trying API endpoints...")
+            
+            # Try common Nanoo.tv API patterns
+            api_urls = [
+                f"https://www.nanoo.tv/api/media/{media_id}",
+                f"https://api.nanoo.tv/media/{media_id}",
+                f"https://www.nanoo.tv/api/v1/media/{media_id}",
+            ]
+            
+            for api_url in api_urls:
+                try:
+                    api_response = requests.get(api_url, headers=headers, timeout=15)
+                    if api_response.status_code == 200:
+                        api_data = api_response.json()
+                        # Look for stream URLs in the API response
+                        if isinstance(api_data, dict):
+                            for key in ['stream_url', 'media_url', 'download_url', 'file_url', 'mp4_url']:
+                                if key in api_data and api_data[key]:
+                                    media_url = api_data[key]
+                                    break
                         if media_url:
                             break
-                            
-            except Exception as e:
-                st.warning(f"Could not analyze page content: {e}")
+                except:
+                    continue
         
-        # Method 2: Try yt-dlp with different options
+        # Step 5: Try to make a request that would trigger the media URL generation
         if not media_url:
-            status_widget.info("🔧 Trying yt-dlp with extended options...")
-            try:
-                # Try with cookies and different user agent
-                extended_command = [
-                    "yt-dlp", 
-                    "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "--referer", url,
-                    "-f", "best",
-                    "-g", 
-                    url
-                ]
-                result = subprocess.run(extended_command, capture_output=True, text=True, timeout=60)
-                if result.returncode == 0 and result.stdout.strip():
-                    media_url = result.stdout.strip()
-            except Exception as e:
-                st.warning(f"Extended yt-dlp attempt failed: {e}")
+            status_widget.info("⚡ Step 5: Attempting to trigger media URL generation...")
+            
+            # Try to find and execute any JavaScript that might reveal the media URL
+            js_patterns = [
+                r'fetch\(["\']([^"\']*media[^"\']*)["\']',
+                r'xhr\.open\([^,]*,["\']([^"\']*stream[^"\']*)["\']',
+                r'ajax\([^{]*url[:\s]*["\']([^"\']*media[^"\']*)["\']',
+            ]
+            
+            for pattern in js_patterns:
+                matches = re.findall(pattern, content, re.IGNORECASE)
+                for match in matches:
+                    try:
+                        if not match.startswith('http'):
+                            match = 'https://www.nanoo.tv' + match
+                        test_response = requests.get(match, headers=headers, timeout=10)
+                        if test_response.status_code == 200:
+                            if '.mp4' in test_response.url:
+                                media_url = test_response.url
+                                break
+                    except:
+                        continue
+                if media_url:
+                    break
         
         status_widget.empty()
+        return media_url
         
-        if media_url:
-            st.session_state.stream_urls = media_url
-            st.session_state.stage = 'alternative_fetched'
-        else:
-            st.error("❌ Could not find a downloadable media stream. This URL might require special handling or may not contain downloadable media.")
-            st.info("💡 **Troubleshooting suggestions:**")
-            st.info("• Make sure the URL is publicly accessible")
-            st.info("• Try copying the direct video/audio URL if available")
-            st.info("• Some platforms may block automated downloads")
-            st.session_state.stage = 'initial'
-            
     except Exception as e:
         status_widget.empty()
-        st.error(f"An error occurred during alternative extraction: {e}")
+        st.error(f"Error extracting from Nanoo.tv: {e}")
+        return None
+
+def try_alternative_extraction(url: str):
+    """
+    Alternative approach - tries different extraction methods based on the URL.
+    """
+    media_url = None
+    
+    # Special handling for Nanoo.tv
+    if 'nanoo.tv' in url.lower():
+        media_url = extract_nanoo_media_url(url)
+    
+    # If Nanoo extraction didn't work or it's not Nanoo, try general methods
+    if not media_url:
+        status_widget = st.empty()
+        try:
+            status_widget.info("🔍 Trying general extraction methods...")
+            
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            }
+            response = requests.get(url, headers=headers, timeout=30)
+            response.raise_for_status()
+            content = response.text
+            
+            # General patterns for media URLs
+            patterns = [
+                r'"(https?://[^"]*\.mp4[^"]*)"',
+                r'"(https?://[^"]*\.mp3[^"]*)"',
+                r'"(https?://[^"]*\.m4a[^"]*)"',
+                r'"(https?://[^"]*\.webm[^"]*)"',
+                r'src="([^"]*\.[mp4|mp3|m4a|webm][^"]*)"',
+                r'data-src="([^"]*\.[mp4|mp3|m4a|webm][^"]*)"',
+            ]
+            
+            for pattern in patterns:
+                matches = re.findall(pattern, content, re.IGNORECASE)
+                if matches:
+                    for match in matches:
+                        if match.startswith('http') and any(ext in match.lower() for ext in ['.mp4', '.mp3', '.m4a', '.webm']):
+                            media_url = match
+                            break
+                    if media_url:
+                        break
+                        
+            status_widget.empty()
+                        
+        except Exception as e:
+            status_widget.empty()
+            st.warning(f"General extraction failed: {e}")
+    
+    # Try yt-dlp as final fallback
+    if not media_url:
+        try:
+            st.info("🔧 Trying yt-dlp with extended options...")
+            extended_command = [
+                "yt-dlp", 
+                "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "--referer", url,
+                "-f", "best",
+                "-g", 
+                url
+            ]
+            result = subprocess.run(extended_command, capture_output=True, text=True, timeout=60)
+            if result.returncode == 0 and result.stdout.strip():
+                media_url = result.stdout.strip()
+        except Exception as e:
+            st.warning(f"yt-dlp fallback failed: {e}")
+    
+    if media_url:
+        st.session_state.stream_urls = media_url
+        st.session_state.stage = 'alternative_fetched'
+    else:
+        st.error("❌ Could not find a downloadable media stream.")
+        st.info("💡 **For Nanoo.tv links:**")
+        st.info("1. Make sure the link is publicly accessible")
+        st.info("2. Try opening the link in a browser first to verify it works")
+        st.info("3. Some Nanoo.tv content may require login or have restricted access")
         st.session_state.stage = 'initial'
 
 def download_from_direct_link(stream_url: str):
@@ -306,10 +434,31 @@ def main():
 
     if st.session_state.stage == "alternative_fetched":
         st.success("✅ Found a potential media link!")
+        
+        # Display the URL in a copyable format
+        st.markdown("**🔗 Extracted Media URL:**")
         st.code(st.session_state.stream_urls, language="text")
-        if st.button("Start Download from Found Link", key="alternative_download"):
-            st.session_state.stage = "alternative_downloading"
-            st.rerun()
+        
+        # Create a text input with the URL so users can easily copy it
+        st.text_input(
+            "📋 Copy this URL:", 
+            value=st.session_state.stream_urls, 
+            key="copyable_url",
+            help="You can copy this URL and use it elsewhere, or download the file directly below."
+        )
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("📥 Download File", key="alternative_download", type="primary"):
+                st.session_state.stage = "alternative_downloading"
+                st.rerun()
+        with col2:
+            if st.button("🔄 Try Another URL", key="reset_app"):
+                st.session_state.stage = "initial"
+                st.session_state.sanitized_url = ""
+                st.session_state.stream_urls = ""
+                st.session_state.download_info = {}
+                st.rerun()
 
     if st.session_state.stage == "alternative_downloading":
         download_from_direct_link(st.session_state.stream_urls)
