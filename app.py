@@ -6,12 +6,13 @@ import re
 import time
 from urllib.parse import urlparse
 import requests
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, WebDriverException
+# Remove Selenium imports since they won't work on Streamlit Cloud
+# from selenium import webdriver
+# from selenium.webdriver.chrome.options import Options
+# from selenium.webdriver.common.by import By
+# from selenium.webdriver.support.ui import WebDriverWait
+# from selenium.webdriver.support import expected_conditions as EC
+# from selenium.common.exceptions import TimeoutException, WebDriverException
 import json
 
 # --- Sanitization Function ---
@@ -44,217 +45,223 @@ def display_download_button(file_name: str, data: io.BytesIO, label: str):
         mime=mime,
     )
 
-# --- Selenium Setup Function ---
-def setup_selenium_driver():
-    """Set up Chrome driver with appropriate options for headless operation."""
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--disable-web-security")
-    chrome_options.add_argument("--allow-running-insecure-content")
-    chrome_options.add_argument("--disable-extensions")
-    chrome_options.add_argument("--disable-plugins")
-    chrome_options.add_argument("--disable-images")
-    chrome_options.add_argument("--disable-javascript")  # We'll enable this later if needed
-    chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebDriver/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-    
-    # Enable logging for network requests
-    chrome_options.add_argument("--enable-logging")
-    chrome_options.add_argument("--log-level=0")
-    chrome_options.add_experimental_option("useAutomationExtension", False)
-    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    
-    # Enable performance logging to capture network requests
-    chrome_options.add_experimental_option('perfLoggingPrefs', {
-        'enableNetwork': True,
-        'enablePage': False,
-    })
-    chrome_options.add_experimental_option('loggingPrefs', {'performance': 'ALL'})
-    
-    try:
-        driver = webdriver.Chrome(options=chrome_options)
-        return driver
-    except Exception as e:
-        st.error(f"Failed to initialize Chrome driver: {e}")
-        st.info("Make sure Chrome/Chromium and ChromeDriver are installed.")
-        return None
+# --- Selenium Setup Function (Not compatible with Streamlit Cloud) ---
+# def setup_selenium_driver():
+#     """This function won't work on Streamlit Cloud due to Chrome/ChromeDriver limitations."""
+#     pass
 
 # --- Enhanced Nanoo.tv Extraction with Selenium ---
-def extract_nanoo_media_url_selenium(url: str):
+def extract_nanoo_media_url_advanced(url: str):
     """
-    Extract media URL from Nanoo.tv using Selenium to capture network requests.
+    Advanced static extraction for Nanoo.tv (Streamlit Cloud compatible).
+    Uses multiple HTTP requests and advanced parsing techniques.
     """
     status_widget = st.empty()
     media_url = None
     
     try:
-        status_widget.info("🚀 Starting Selenium browser to extract Nanoo.tv media URL...")
+        status_widget.info("🚀 Analyzing Nanoo.tv URL with advanced techniques...")
         
-        driver = setup_selenium_driver()
-        if not driver:
+        # Extract media ID from URL
+        media_id_match = re.search(r'/link/v/([a-zA-Z0-9]+)', url)
+        if not media_id_match:
+            status_widget.empty()
             return None
             
-        try:
-            # Navigate to the URL
-            status_widget.info("📡 Loading Nanoo.tv page...")
-            driver.get(url)
-            
-            # Wait for the page to load
-            time.sleep(3)
-            
-            # Try to find and click the play button
-            status_widget.info("▶️ Looking for play button...")
+        media_id = media_id_match.group(1)
+        st.info(f"Found media ID: {media_id}")
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5,de;q=0.3',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+        }
+        
+        session = requests.Session()
+        
+        # Step 1: Get the main page
+        status_widget.info("📡 Loading main page...")
+        response = session.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+        content = response.text
+        
+        # Step 2: Look for immediate media URLs
+        status_widget.info("🔍 Searching for embedded media URLs...")
+        immediate_patterns = [
+            r'"(https?://http\.nanoo\.tv/mediacontent/export/[^"]*\.mp4[^"]*)"',
+            r'"(https?://[^"]*nanoo\.tv[^"]*stream[^"]*\.mp4[^"]*)"',
+            r'src[:\s]*["\']([^"\']*http\.nanoo\.tv[^"\']*\.mp4[^"\']*)["\']',
+            r'data-src[:\s]*["\']([^"\']*http\.nanoo\.tv[^"\']*\.mp4[^"\']*)["\']',
+        ]
+        
+        for pattern in immediate_patterns:
+            matches = re.findall(pattern, content, re.IGNORECASE)
+            if matches:
+                media_url = matches[0]
+                st.success(f"Found embedded media URL: {media_url}")
+                status_widget.empty()
+                return media_url
+        
+        # Step 3: Extract tokens and session info
+        status_widget.info("🔑 Extracting authentication tokens...")
+        token_patterns = [
+            r'"token"[:\s]*"([^"]+)"',
+            r'"auth"[:\s]*"([^"]+)"',
+            r'"session"[:\s]*"([^"]+)"',
+            r'data-token="([^"]+)"',
+            r'_token["\s]*:["\s]*"([^"]+)"',
+            r'csrf[_-]?token["\s]*:["\s]*"([^"]+)"',
+            r'access[_-]?token["\s]*:["\s]*"([^"]+)"',
+        ]
+        
+        auth_token = None
+        for pattern in token_patterns:
+            match = re.search(pattern, content, re.IGNORECASE)
+            if match:
+                auth_token = match.group(1)
+                st.info(f"Found authentication token")
+                break
+        
+        # Step 4: Try API endpoints
+        status_widget.info("🌐 Trying API endpoints...")
+        api_endpoints = [
+            f"https://www.nanoo.tv/api/player/{media_id}",
+            f"https://www.nanoo.tv/player/load/{media_id}", 
+            f"https://www.nanoo.tv/embed/player/{media_id}",
+            f"https://www.nanoo.tv/link/player/{media_id}",
+            f"https://api.nanoo.tv/v1/media/{media_id}",
+            f"https://www.nanoo.tv/ajax/media/{media_id}",
+            f"https://www.nanoo.tv/api/v1/link/{media_id}",
+            f"https://www.nanoo.tv/player/config/{media_id}",
+        ]
+        
+        api_headers = headers.copy()
+        api_headers.update({
+            'Accept': 'application/json, text/plain, */*',
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+            'Referer': url,
+        })
+        
+        if auth_token:
+            api_headers['Authorization'] = f'Bearer {auth_token}'
+            api_headers['X-CSRF-TOKEN'] = auth_token
+        
+        for api_endpoint in api_endpoints:
             try:
-                # Common selectors for play buttons
-                play_selectors = [
-                    "button[class*='play']",
-                    ".play-button",
-                    "[data-action='play']",
-                    ".player-play-button",
-                    "button[title*='play' i]",
-                    "button[aria-label*='play' i]",
-                    ".vjs-big-play-button",
-                    ".video-play-button"
-                ]
+                status_widget.info(f"🔄 Trying: {api_endpoint.split('/')[-2:]}")
+                api_response = session.get(api_endpoint, headers=api_headers, timeout=15)
                 
-                play_button = None
-                for selector in play_selectors:
+                if api_response.status_code == 200:
                     try:
-                        play_button = WebDriverWait(driver, 2).until(
-                            EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
-                        )
-                        break
-                    except TimeoutException:
-                        continue
-                
-                if play_button:
-                    status_widget.info("🎬 Found play button, clicking it...")
-                    driver.execute_script("arguments[0].click();", play_button)
-                    time.sleep(2)
-                else:
-                    status_widget.info("🔄 No play button found, proceeding to capture network requests...")
-                    
-            except Exception as e:
-                status_widget.info(f"⚠️ Could not interact with play button: {e}")
-            
-            # Enable JavaScript if it was disabled
-            driver.execute_script("console.log('JavaScript is working');")
-            
-            # Wait a bit more for any network requests to complete
-            time.sleep(5)
-            
-            # Capture network logs
-            status_widget.info("🕵️ Analyzing network requests...")
-            logs = driver.get_log('performance')
-            
-            # Look for media URLs in network logs
-            for log in logs:
-                try:
-                    message = json.loads(log['message'])
-                    if message['message']['method'] == 'Network.responseReceived':
-                        response_url = message['message']['params']['response']['url']
+                        # Try JSON parsing
+                        api_data = api_response.json()
                         
-                        # Check if this is a media URL
-                        if ('nanoo.tv' in response_url and 
-                            ('.mp4' in response_url or 'stream' in response_url) and
-                            'mediacontent/export' in response_url):
-                            media_url = response_url
-                            st.success(f"🎯 Found media URL in network logs: {media_url}")
+                        # Recursive search for media URLs in JSON
+                        def find_media_url_in_data(obj, path=""):
+                            if isinstance(obj, dict):
+                                for key, value in obj.items():
+                                    if isinstance(value, str) and 'http.nanoo.tv' in value and '.mp4' in value:
+                                        return value
+                                    elif key.lower() in ['url', 'src', 'stream', 'media', 'video'] and isinstance(value, str) and '.mp4' in value:
+                                        return value
+                                    elif isinstance(value, (dict, list)):
+                                        result = find_media_url_in_data(value, f"{path}.{key}")
+                                        if result:
+                                            return result
+                            elif isinstance(obj, list):
+                                for i, item in enumerate(obj):
+                                    result = find_media_url_in_data(item, f"{path}[{i}]")
+                                    if result:
+                                        return result
+                            return None
+                        
+                        found_url = find_media_url_in_data(api_data)
+                        if found_url:
+                            media_url = found_url
+                            st.success(f"Found media URL in API response!")
                             break
                             
-                except (KeyError, json.JSONDecodeError):
-                    continue
+                    except ValueError:
+                        # Not JSON, search in text
+                        response_text = api_response.text
+                        for pattern in immediate_patterns:
+                            matches = re.findall(pattern, response_text, re.IGNORECASE)
+                            if matches:
+                                media_url = matches[0]
+                                st.success(f"Found media URL in API text response!")
+                                break
+                        if media_url:
+                            break
+                            
+            except Exception as e:
+                continue
+        
+        # Step 5: Extract content ID and construct URL
+        if not media_url:
+            status_widget.info("🔧 Attempting URL construction...")
             
-            # If not found in logs, try to extract from page source
-            if not media_url:
-                status_widget.info("🔍 Searching page source for media URLs...")
-                page_source = driver.page_source
-                
-                # Patterns specific to Nanoo.tv
-                patterns = [
-                    r'"(https?://http\.nanoo\.tv/mediacontent/export/[^"]*\.mp4[^"]*)"',
-                    r'"(https?://[^"]*nanoo\.tv[^"]*stream[^"]*\.mp4[^"]*)"',
-                    r'src[:\s]*["\']([^"\']*http\.nanoo\.tv[^"\']*\.mp4[^"\']*)["\']',
-                ]
-                
-                for pattern in patterns:
-                    matches = re.findall(pattern, page_source, re.IGNORECASE)
-                    if matches:
-                        media_url = matches[0]
-                        st.success(f"🎯 Found media URL in page source: {media_url}")
+            # More comprehensive content ID patterns
+            numeric_patterns = [
+                r'"contentId"[:\s]*"?([0-9]+)"?',
+                r'"mediaContentId"[:\s]*"?([0-9]+)"?',
+                r'"content_id"[:\s]*"?([0-9]+)"?',
+                r'"id"[:\s]*([0-9]{5,8})',  # Look for 5-8 digit IDs
+                r'data-content-id="([0-9]+)"',
+                r'/export/([0-9]+)/',
+                r'content[_-]?id["\s]*:["\s]*"?([0-9]+)"?',
+                rf'"{media_id}"[^0-9]*([0-9]{{5,8}})',  # Media ID followed by numeric ID
+                r'nanoo\.tv/[^0-9]*([0-9]{5,8})',  # Any nanoo.tv URL with numeric ID
+            ]
+            
+            content_id = None
+            for pattern in numeric_patterns:
+                matches = re.findall(pattern, content, re.IGNORECASE)
+                if matches:
+                    # Take the most reasonable ID (filter out very short/long ones)
+                    for match in matches:
+                        if 5 <= len(match) <= 8:  # Reasonable content ID length
+                            content_id = match
+                            break
+                    if content_id:
                         break
             
-            # If still not found, try to construct the URL based on the media ID
-            if not media_url:
-                status_widget.info("🔧 Attempting to construct media URL from page data...")
+            if content_id:
+                st.info(f"Found potential content ID: {content_id}")
                 
-                # Extract media ID from URL
-                media_id_match = re.search(r'/link/v/([a-zA-Z0-9]+)', url)
-                if media_id_match:
-                    media_id = media_id_match.group(1)
-                    
-                    # Look for numeric content ID in page source
-                    page_source = driver.page_source
-                    numeric_patterns = [
-                        r'"contentId"[:\s]*"?([0-9]+)"?',
-                        r'"mediaContentId"[:\s]*"?([0-9]+)"?',
-                        r'"id"[:\s]*"?([0-9]+)"?',
-                        r'data-content-id="([0-9]+)"',
-                        r'/export/([0-9]+)/',
-                        rf'"{media_id}"[^0-9]*([0-9]+)',
-                    ]
-                    
-                    content_id = None
-                    for pattern in numeric_patterns:
-                        match = re.search(pattern, page_source)
-                        if match:
-                            potential_id = match.group(1)
-                            # Validate that it's a reasonable content ID (not too short/long)
-                            if 4 <= len(potential_id) <= 10:
-                                content_id = potential_id
+                # Comprehensive URL construction attempts
+                constructed_urls = [
+                    f"https://http.nanoo.tv/mediacontent/export/{content_id}/{content_id}_stream_hi.mp4",
+                    f"https://http.nanoo.tv/mediacontent/export/{content_id}/{content_id}_stream.mp4",
+                    f"https://http.nanoo.tv/mediacontent/export/{content_id}/{content_id}.mp4",
+                    f"https://http.nanoo.tv/mediacontent/export/{content_id}/stream_hi.mp4",
+                    f"https://http.nanoo.tv/mediacontent/export/{content_id}/stream.mp4",
+                ]
+                
+                for constructed_url in constructed_urls:
+                    try:
+                        test_response = session.head(constructed_url, headers=headers, timeout=10)
+                        if test_response.status_code == 200:
+                            content_type = test_response.headers.get('content-type', '').lower()
+                            if 'video' in content_type or 'mp4' in content_type:
+                                media_url = constructed_url
+                                st.success(f"Successfully constructed and verified media URL!")
                                 break
-                    
-                    if content_id:
-                        # Construct potential URLs
-                        constructed_urls = [
-                            f"https://http.nanoo.tv/mediacontent/export/{content_id}/{content_id}_stream_hi.mp4",
-                            f"https://http.nanoo.tv/mediacontent/export/{content_id}/{content_id}_stream.mp4",
-                            f"https://http.nanoo.tv/mediacontent/export/{content_id}/{content_id}.mp4",
-                        ]
-                        
-                        # Test constructed URLs
-                        headers = {
-                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebDriver/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                            'Referer': url
-                        }
-                        
-                        for constructed_url in constructed_urls:
-                            try:
-                                # Use the driver to test the URL
-                                driver.get(constructed_url)
-                                time.sleep(1)
-                                
-                                # Check if we got a video response (not an error page)
-                                current_url = driver.current_url
-                                if current_url == constructed_url or 'error' not in driver.page_source.lower():
-                                    media_url = constructed_url
-                                    st.success(f"🎯 Successfully constructed media URL: {media_url}")
-                                    break
-                            except:
-                                continue
-                                
-        finally:
-            # Always clean up the driver
-            driver.quit()
-            
+                    except:
+                        continue
+        
         status_widget.empty()
         return media_url
         
     except Exception as e:
         status_widget.empty()
-        st.error(f"Selenium extraction failed: {e}")
+        st.error(f"Advanced extraction failed: {e}")
         return None
 
 # --- Logic Functions (Update Session State) ---
@@ -331,9 +338,9 @@ def try_alternative_extraction(url: str):
     """
     media_url = None
     
-    # Special handling for Nanoo.tv with Selenium
+    # Special handling for Nanoo.tv with advanced static analysis
     if 'nanoo.tv' in url.lower():
-        media_url = extract_nanoo_media_url_selenium(url)
+        media_url = extract_nanoo_media_url_advanced(url)
     
     # If Nanoo extraction didn't work or it's not Nanoo, try general methods
     if not media_url:
@@ -401,7 +408,7 @@ def try_alternative_extraction(url: str):
         st.info("1. Make sure the link is publicly accessible")
         st.info("2. Try opening the link in a browser first to verify it works")
         st.info("3. Some Nanoo.tv content may require login or have restricted access")
-        st.info("4. Ensure Chrome/Chromium and ChromeDriver are installed for Selenium")
+        st.info("4. The advanced static analysis method is optimized for Streamlit Cloud")
         st.session_state.stage = 'initial'
 
 def download_from_direct_link(stream_url: str):
@@ -445,7 +452,7 @@ def download_from_direct_link(stream_url: str):
 def main():
     st.set_page_config(page_title="Hybrid Media Downloader", page_icon="🔗", layout="centered")
     st.title("Hybrid Universal Media Downloader")
-    st.markdown("Supports **video**, **audio**, and tricky sites like **Nanoo.tv** (with Selenium).")
+    st.markdown("Supports **video**, **audio**, and tricky sites like **Nanoo.tv** (Streamlit Cloud compatible).")
 
     # --- Initialize Session State ---
     if "stage" not in st.session_state:
@@ -473,7 +480,7 @@ def main():
     
     if selected_example == "Nanoo.tv":
         st.info("📋 For Nanoo.tv: Click 'Share', then copy the generated link.")
-        st.warning("🔧 **Note:** Nanoo.tv extraction requires Selenium. Make sure Chrome/Chromium and ChromeDriver are installed.")
+        st.warning("🔧 **Note:** Nanoo.tv extraction uses advanced static analysis optimized for cloud environments.")
     elif selected_example == "SRF Video":
         st.info("📋 For SRF Video: Click 'Teilen' (Share), then click the 'Link' icon to copy.")
     elif selected_example == "SRF Audio (Embed Code)":
