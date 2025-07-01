@@ -1,2 +1,2 @@
 ffmpeg
-google-chrome-stable
+chromium-browser
