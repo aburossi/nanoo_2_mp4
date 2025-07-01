@@ -107,7 +107,7 @@ def run_full_yt_dlp_download(url: str):
 
 def extract_nanoo_media_url(url: str):
     """
-    Extract media URL from Nanoo.tv by analyzing the page structure and making API calls.
+    Extract media URL from Nanoo.tv by simulating browser behavior and intercepting network requests.
     """
     status_widget = st.empty()
     media_url = None
@@ -122,119 +122,178 @@ def extract_nanoo_media_url(url: str):
             'Accept-Encoding': 'gzip, deflate, br',
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
         }
         
         # Step 1: Get the main page
         status_widget.info("📡 Step 1: Loading Nanoo.tv page...")
-        response = requests.get(url, headers=headers, timeout=30)
+        session = requests.Session()
+        response = session.get(url, headers=headers, timeout=30)
         response.raise_for_status()
         content = response.text
         
-        # Step 2: Extract the media ID from the URL or page content
+        # Step 2: Extract the media ID from the URL
         status_widget.info("🔍 Step 2: Extracting media ID...")
-        
-        # Try to extract ID from URL pattern: nanoo.tv/link/v/XXXXXXXX
         media_id_match = re.search(r'/link/v/([a-zA-Z0-9]+)', url)
         if media_id_match:
             media_id = media_id_match.group(1)
             st.info(f"Found media ID: {media_id}")
         else:
-            # Try to find it in the page content
-            id_patterns = [
-                r'"mediaId"[:\s]*"([^"]+)"',
-                r'"id"[:\s]*"([a-zA-Z0-9]+)"',
-                r'data-media-id="([^"]+)"',
-                r'mediaId[:\s]*["\']([^"\']+)["\']',
-            ]
-            
-            for pattern in id_patterns:
-                match = re.search(pattern, content, re.IGNORECASE)
-                if match:
-                    media_id = match.group(1)
-                    break
-            else:
-                media_id = None
-        
-        if not media_id:
-            st.warning("Could not extract media ID from the page")
+            st.warning("Could not extract media ID from URL")
             return None
         
-        # Step 3: Look for API endpoints or direct media URLs in the page
-        status_widget.info("🔎 Step 3: Searching for media streams...")
-        
-        # Common patterns for Nanoo.tv media URLs
-        nanoo_patterns = [
-            r'"(https?://[^"]*nanoo\.tv[^"]*\.mp4[^"]*)"',
-            r'"(https?://[^"]*nanoo\.tv[^"]*stream[^"]*)"',
-            r'"(https?://http\.nanoo\.tv[^"]*\.mp4[^"]*)"',
-            r'"(https?://[^"]*mediacontent[^"]*\.mp4[^"]*)"',
-            r'src[:\s]*["\']([^"\']*nanoo\.tv[^"\']*\.mp4[^"\']*)["\']',
-            r'url[:\s]*["\']([^"\']*stream[^"\']*\.mp4[^"\']*)["\']',
+        # Step 3: Look for any immediate media URLs in the HTML
+        status_widget.info("🔎 Step 3: Searching for embedded media URLs...")
+        immediate_patterns = [
+            r'"(https?://http\.nanoo\.tv/mediacontent/export/[^"]*\.mp4[^"]*)"',
+            r'"(https?://[^"]*nanoo\.tv[^"]*stream[^"]*\.mp4[^"]*)"',
+            r'src[:\s]*["\']([^"\']*http\.nanoo\.tv[^"\']*\.mp4[^"\']*)["\']',
         ]
         
-        for pattern in nanoo_patterns:
+        for pattern in immediate_patterns:
             matches = re.findall(pattern, content, re.IGNORECASE)
             if matches:
-                for match in matches:
-                    if '.mp4' in match and ('stream' in match or 'nanoo.tv' in match):
-                        media_url = match
-                        break
-                if media_url:
+                media_url = matches[0]
+                st.success(f"Found embedded media URL: {media_url}")
+                break
+        
+        # Step 4: Try to trigger the media URL generation by simulating what the browser does
+        if not media_url:
+            status_widget.info("🌐 Step 4: Simulating browser requests to generate media URL...")
+            
+            # Extract any tokens, session info, or parameters from the page
+            token_patterns = [
+                r'"token"[:\s]*"([^"]+)"',
+                r'"auth"[:\s]*"([^"]+)"',
+                r'"session"[:\s]*"([^"]+)"',
+                r'data-token="([^"]+)"',
+                r'_token["\s]*:["\s]*"([^"]+)"',
+            ]
+            
+            auth_token = None
+            for pattern in token_patterns:
+                match = re.search(pattern, content, re.IGNORECASE)
+                if match:
+                    auth_token = match.group(1)
                     break
-        
-        # Step 4: If no direct URL found, try to construct API calls
-        if not media_url:
-            status_widget.info("🌐 Step 4: Trying API endpoints...")
             
-            # Try common Nanoo.tv API patterns
-            api_urls = [
-                f"https://www.nanoo.tv/api/media/{media_id}",
-                f"https://api.nanoo.tv/media/{media_id}",
-                f"https://www.nanoo.tv/api/v1/media/{media_id}",
+            # Try different API endpoints that might generate the media URL
+            api_endpoints = [
+                f"https://www.nanoo.tv/player/load/{media_id}",
+                f"https://www.nanoo.tv/api/player/{media_id}",
+                f"https://www.nanoo.tv/embed/player/{media_id}",
+                f"https://www.nanoo.tv/link/player/{media_id}",
+                f"https://api.nanoo.tv/v1/media/{media_id}",
+                f"https://www.nanoo.tv/ajax/media/{media_id}",
             ]
             
-            for api_url in api_urls:
+            # Update headers for API requests
+            api_headers = headers.copy()
+            api_headers.update({
+                'Accept': 'application/json, text/plain, */*',
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+                'Referer': url,
+            })
+            
+            if auth_token:
+                api_headers['Authorization'] = f'Bearer {auth_token}'
+                api_headers['X-CSRF-TOKEN'] = auth_token
+            
+            for api_endpoint in api_endpoints:
                 try:
-                    api_response = requests.get(api_url, headers=headers, timeout=15)
+                    status_widget.info(f"🔄 Trying: {api_endpoint}")
+                    api_response = session.get(api_endpoint, headers=api_headers, timeout=15)
+                    
                     if api_response.status_code == 200:
-                        api_data = api_response.json()
-                        # Look for stream URLs in the API response
-                        if isinstance(api_data, dict):
-                            for key in ['stream_url', 'media_url', 'download_url', 'file_url', 'mp4_url']:
-                                if key in api_data and api_data[key]:
-                                    media_url = api_data[key]
+                        try:
+                            # Try to parse as JSON
+                            api_data = api_response.json()
+                            st.info(f"API Response received: {type(api_data)}")
+                            
+                            # Look for media URLs in the JSON response
+                            def find_media_url_in_json(obj, path=""):
+                                if isinstance(obj, dict):
+                                    for key, value in obj.items():
+                                        if isinstance(value, str) and 'http.nanoo.tv' in value and '.mp4' in value:
+                                            return value
+                                        elif isinstance(value, (dict, list)):
+                                            result = find_media_url_in_json(value, f"{path}.{key}")
+                                            if result:
+                                                return result
+                                elif isinstance(obj, list):
+                                    for i, item in enumerate(obj):
+                                        result = find_media_url_in_json(item, f"{path}[{i}]")
+                                        if result:
+                                            return result
+                                return None
+                            
+                            found_url = find_media_url_in_json(api_data)
+                            if found_url:
+                                media_url = found_url
+                                st.success(f"Found media URL in API response: {media_url}")
+                                break
+                                
+                        except ValueError:
+                            # Not JSON, search in text
+                            response_text = api_response.text
+                            for pattern in immediate_patterns:
+                                matches = re.findall(pattern, response_text, re.IGNORECASE)
+                                if matches:
+                                    media_url = matches[0]
+                                    st.success(f"Found media URL in API text response: {media_url}")
                                     break
-                        if media_url:
-                            break
-                except:
+                            if media_url:
+                                break
+                                
+                except Exception as e:
                     continue
+                    
+            if media_url:
+                status_widget.empty()
+                return media_url
         
-        # Step 5: Try to make a request that would trigger the media URL generation
+        # Step 5: Try to construct the media URL based on patterns
         if not media_url:
-            status_widget.info("⚡ Step 5: Attempting to trigger media URL generation...")
+            status_widget.info("🔧 Step 5: Attempting to construct media URL...")
             
-            # Try to find and execute any JavaScript that might reveal the media URL
-            js_patterns = [
-                r'fetch\(["\']([^"\']*media[^"\']*)["\']',
-                r'xhr\.open\([^,]*,["\']([^"\']*stream[^"\']*)["\']',
-                r'ajax\([^{]*url[:\s]*["\']([^"\']*media[^"\']*)["\']',
+            # Extract any numeric IDs from the page that might be the actual media content ID
+            numeric_id_patterns = [
+                r'"contentId"[:\s]*([0-9]+)',
+                r'"mediaContentId"[:\s]*([0-9]+)',
+                r'"id"[:\s]*([0-9]+)',
+                r'data-content-id="([0-9]+)"',
+                r'/export/([0-9]+)/',
             ]
             
-            for pattern in js_patterns:
-                matches = re.findall(pattern, content, re.IGNORECASE)
-                for match in matches:
+            content_id = None
+            for pattern in numeric_id_patterns:
+                match = re.search(pattern, content)
+                if match:
+                    content_id = match.group(1)
+                    st.info(f"Found potential content ID: {content_id}")
+                    break
+            
+            if content_id:
+                # Try to construct the URL based on the pattern you provided
+                constructed_urls = [
+                    f"https://http.nanoo.tv/mediacontent/export/{content_id}/{content_id}_stream_hi.mp4",
+                    f"https://http.nanoo.tv/mediacontent/export/{content_id}/{content_id}_stream.mp4",
+                    f"https://http.nanoo.tv/mediacontent/export/{content_id}/{content_id}.mp4",
+                ]
+                
+                for constructed_url in constructed_urls:
                     try:
-                        if not match.startswith('http'):
-                            match = 'https://www.nanoo.tv' + match
-                        test_response = requests.get(match, headers=headers, timeout=10)
+                        # Test if the constructed URL is accessible
+                        test_response = session.head(constructed_url, headers=headers, timeout=10)
                         if test_response.status_code == 200:
-                            if '.mp4' in test_response.url:
-                                media_url = test_response.url
-                                break
+                            media_url = constructed_url
+                            st.success(f"Successfully constructed media URL: {media_url}")
+                            break
                     except:
                         continue
-                if media_url:
-                    break
         
         status_widget.empty()
         return media_url
