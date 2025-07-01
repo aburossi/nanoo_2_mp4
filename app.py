@@ -12,6 +12,8 @@ import requests
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.chrome.options import Options
+# --- MODIFIED: Added webdriver-manager to handle the driver automatically ---
+from webdriver_manager.chrome import ChromeDriverManager
 
 # --- Sanitization Function ---
 def sanitize_and_extract_url(input_text: str) -> str:
@@ -100,7 +102,6 @@ def run_full_yt_dlp_download(url: str):
             with open(downloaded_file, "rb") as fp:
                 media_bytes = io.BytesIO(fp.read())
             
-            # Store data for the download button
             st.session_state.download_info = {"file_name": file_name, "data": media_bytes}
             st.session_state.stage = 'downloaded'
             os.remove(downloaded_file)
@@ -118,7 +119,7 @@ def start_selenium_process(url: str):
     status_widget = st.empty()
     try:
         status_widget.info("🚀 Selenium Fallback: Initializing virtual browser...")
-        # (Selenium setup code remains the same)
+        
         chrome_options = Options()
         chrome_options.add_argument("--headless")
         chrome_options.add_argument("--no-sandbox")
@@ -126,7 +127,11 @@ def start_selenium_process(url: str):
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument(f"--user-data-dir=/tmp/selenium_{int(time.time())}")
         chrome_options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
-        service = ChromeService(executable_path="/usr/bin/chromedriver")
+        
+        # --- MODIFIED: Use webdriver-manager to automatically install and manage the chromedriver ---
+        # This removes the need for a hardcoded path and is much more reliable.
+        status_widget.info("...installing browser driver if needed...")
+        service = ChromeService(ChromeDriverManager().install())
 
         with webdriver.Chrome(service=service, options=chrome_options) as driver:
             status_widget.info("🌍 Selenium: Navigating to URL...")
@@ -153,7 +158,7 @@ def start_selenium_process(url: str):
             st.error("❌ Selenium fallback also failed. Could not find a downloadable video or audio stream.")
             st.session_state.stage = 'initial'
     except Exception as e:
-        status_widget.empty
+        status_widget.empty()
         st.error(f"An error occurred during Selenium browser automation: {e}")
         st.session_state.stage = 'initial'
 
@@ -205,12 +210,11 @@ def main():
         key="examples"
     )
     
-    # --- MODIFIED: Dynamic Visual Guide ---
     st.markdown("---")
     st.write("**Copy the link as shown in the image and paste it below:**")
     
     if selected_example == "Nanoo.tv (Example)":
-        st.image("nanoo.png", caption="1. Click 'Create access link', 2. Copy the generated link.")
+        st.image("nanoo.png", caption="1. Click 'Share', 2. Copy the generated link.")
     elif selected_example == "SRF Video":
         st.image("srf-video.png", caption="1. Click 'Teilen' (Share), 2. Click the 'Link' icon to copy.")
     elif selected_example == "SRF Audio (Embed Code)":
