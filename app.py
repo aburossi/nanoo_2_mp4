@@ -3,15 +3,9 @@ import subprocess
 import os
 import io
 import re
-import json
 import time
 from urllib.parse import urlparse
 import requests
-
-# --- Selenium Imports ---
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service as ChromeService
-from selenium.webdriver.chrome.options import Options
 
 # --- Sanitization Function ---
 def sanitize_and_extract_url(input_text: str) -> str:
@@ -59,16 +53,16 @@ def fetch_data_with_yt_dlp(url: str):
         if st.session_state.stream_urls:
             st.session_state.stage = 'fetched' # Transition to next stage
         else:
-            st.warning("yt-dlp ran but found no streamable links. Trying Selenium fallback...")
-            st.session_state.stage = 'selenium_fallback'
+            st.warning("yt-dlp ran but found no streamable links. Trying alternative approach...")
+            st.session_state.stage = 'alternative_fallback'
 
     except subprocess.CalledProcessError as e:
         if "Unsupported URL" in e.stderr:
-             st.warning("⚠️ yt-dlp does not support this URL directly. Triggering fallback to browser automation...")
-             st.session_state.stage = 'selenium_fallback' # Transition to fallback
+             st.warning("⚠️ yt-dlp does not support this URL directly. Trying alternative approach...")
+             st.session_state.stage = 'alternative_fallback'
         else:
              st.error(f"yt-dlp failed. Error: {e.stderr.strip()}")
-             st.session_state.stage = 'initial' # Reset on error
+             st.session_state.stage = 'initial'
 
 def run_full_yt_dlp_download(url: str):
     """
@@ -111,72 +105,130 @@ def run_full_yt_dlp_download(url: str):
         st.error("❌ yt-dlp failed. See full logs above for details.")
         st.session_state.stage = 'initial'
 
-def start_selenium_process(url: str):
+def try_alternative_extraction(url: str):
     """
-    Selenium fallback to find a direct media link and update session state.
+    Alternative approach without Selenium - tries direct URL patterns and simple requests.
     """
     status_widget = st.empty()
     try:
-        status_widget.info("🚀 Selenium Fallback: Initializing virtual browser...")
-        # (Selenium setup code remains the same)
-        chrome_options = Options()
-        chrome_options.add_argument("--headless")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument(f"--user-data-dir=/tmp/selenium_{int(time.time())}")
-        chrome_options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
-        service = ChromeService(executable_path="/usr/bin/chromedriver")
-
-        with webdriver.Chrome(service=service, options=chrome_options) as driver:
-            status_widget.info("🌍 Selenium: Navigating to URL...")
-            driver.get(url)
-            time.sleep(12)
-            status_widget.info("🕵️‍♂️ Selenium: Analyzing network traffic...")
-            logs = driver.get_log("performance")
-        status_widget.empty()
-
-        stream_url = None
-        stream_pattern = re.compile(r'https?://.*(?:_stream_|/videos?/|/audio/|manifest|media).*?\.(?:mp4|mp3)(?:[?&].*)?$', re.IGNORECASE)
-        for entry in logs:
-            log = json.loads(entry["message"])["message"]
-            if (log.get("method") == "Network.responseReceived" and "params" in log and "response" in log["params"] and "url" in log["params"]["response"]):
-                found_url = log["params"]["response"]["url"]
-                if stream_pattern.search(found_url):
-                    stream_url = found_url
-                    break
+        status_widget.info("🔍 Trying alternative extraction methods...")
         
-        if stream_url:
-            st.session_state.stream_urls = stream_url # Store single URL
-            st.session_state.stage = 'selenium_fetched'
+        # Try to extract media URLs using different approaches
+        media_url = None
+        
+        # Method 1: Try to find common media patterns in the URL itself
+        if 'nanoo.tv' in url:
+            status_widget.info("🎯 Detected Nanoo.tv - trying direct extraction...")
+            # Try to get the page content and look for media URLs
+            try:
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                }
+                response = requests.get(url, headers=headers, timeout=30)
+                response.raise_for_status()
+                
+                # Look for common video/audio patterns in the HTML
+                content = response.text
+                
+                # Common patterns for media URLs
+                patterns = [
+                    r'"(https?://[^"]*\.mp4[^"]*)"',
+                    r'"(https?://[^"]*\.mp3[^"]*)"',
+                    r'"(https?://[^"]*\.m4a[^"]*)"',
+                    r'"(https?://[^"]*\.webm[^"]*)"',
+                    r'src="([^"]*\.mp4[^"]*)"',
+                    r'src="([^"]*\.mp3[^"]*)"',
+                    r'data-src="([^"]*\.mp4[^"]*)"',
+                    r'video_url["\s]*:["\s]*"([^"]+)"',
+                    r'audio_url["\s]*:["\s]*"([^"]+)"',
+                ]
+                
+                for pattern in patterns:
+                    matches = re.findall(pattern, content, re.IGNORECASE)
+                    if matches:
+                        # Take the first match that looks like a complete URL
+                        for match in matches:
+                            if match.startswith('http') and ('stream' in match or 'media' in match or '.mp4' in match or '.mp3' in match):
+                                media_url = match
+                                break
+                        if media_url:
+                            break
+                            
+            except Exception as e:
+                st.warning(f"Could not analyze page content: {e}")
+        
+        # Method 2: Try yt-dlp with different options
+        if not media_url:
+            status_widget.info("🔧 Trying yt-dlp with extended options...")
+            try:
+                # Try with cookies and different user agent
+                extended_command = [
+                    "yt-dlp", 
+                    "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "--referer", url,
+                    "-f", "best",
+                    "-g", 
+                    url
+                ]
+                result = subprocess.run(extended_command, capture_output=True, text=True, timeout=60)
+                if result.returncode == 0 and result.stdout.strip():
+                    media_url = result.stdout.strip()
+            except Exception as e:
+                st.warning(f"Extended yt-dlp attempt failed: {e}")
+        
+        status_widget.empty()
+        
+        if media_url:
+            st.session_state.stream_urls = media_url
+            st.session_state.stage = 'alternative_fetched'
         else:
-            st.error("❌ Selenium fallback also failed. Could not find a downloadable video or audio stream.")
+            st.error("❌ Could not find a downloadable media stream. This URL might require special handling or may not contain downloadable media.")
+            st.info("💡 **Troubleshooting suggestions:**")
+            st.info("• Make sure the URL is publicly accessible")
+            st.info("• Try copying the direct video/audio URL if available")
+            st.info("• Some platforms may block automated downloads")
             st.session_state.stage = 'initial'
+            
     except Exception as e:
-        status_widget.empty
-        st.error(f"An error occurred during Selenium browser automation: {e}")
+        status_widget.empty()
+        st.error(f"An error occurred during alternative extraction: {e}")
         st.session_state.stage = 'initial'
 
 def download_from_direct_link(stream_url: str):
     """Downloads from direct link and updates session state."""
     try:
         file_name = os.path.basename(urlparse(stream_url).path)
-        if not file_name:
+        if not file_name or '.' not in file_name:
             file_ext = ".mp3" if ".mp3" in stream_url else ".mp4"
             file_name = f"media_file_{int(time.time())}{file_ext}"
 
         with st.spinner(f"Downloading '{file_name}'..."):
-            response = requests.get(stream_url, stream=True, timeout=60)
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+            response = requests.get(stream_url, stream=True, timeout=60, headers=headers)
             response.raise_for_status()
+            
             media_bytes = io.BytesIO()
+            total_size = int(response.headers.get('content-length', 0))
+            downloaded = 0
+            
+            progress_bar = st.progress(0)
             for chunk in response.iter_content(chunk_size=8192):
                 media_bytes.write(chunk)
+                downloaded += len(chunk)
+                if total_size > 0:
+                    progress = downloaded / total_size
+                    progress_bar.progress(progress)
+            
+            progress_bar.empty()
             media_bytes.seek(0)
             
             st.session_state.download_info = {"file_name": file_name, "data": media_bytes}
             st.session_state.stage = 'downloaded'
     except Exception as e:
-        st.error(f"Failed to download the direct link: {e}")
+        st.error(f"Failed to download the media: {e}")
+        st.info("The link might be expired, protected, or require special access.")
         st.session_state.stage = 'initial'
 
 # --- Main App Controller ---
@@ -205,16 +257,17 @@ def main():
         key="examples"
     )
     
-    # --- MODIFIED: Dynamic Visual Guide ---
+    # --- Visual Guide Section ---
     st.markdown("---")
-    st.write("**Copy the link as shown in the image and paste it below:**")
+    st.write("**Copy the link as shown in the example and paste it below:**")
     
+    # Note: Images would need to be uploaded to your repo or hosted elsewhere
     if selected_example == "Nanoo.tv (Example)":
-        st.image("nanoo.png", caption="1. Click 'Share', 2. Copy the generated link.")
+        st.info("📋 For Nanoo.tv: Click 'Share', then copy the generated link.")
     elif selected_example == "SRF Video":
-        st.image("srf-video.png", caption="1. Click 'Teilen' (Share), 2. Click the 'Link' icon to copy.")
+        st.info("📋 For SRF Video: Click 'Teilen' (Share), then click the 'Link' icon to copy.")
     elif selected_example == "SRF Audio (Embed Code)":
-        st.image("srf-audio.png", caption="1. Click 'Teilen' (Share), 2. Copy the 'Embed Code'.")
+        st.info("📋 For SRF Audio: Click 'Teilen' (Share), then copy the 'Embed Code'.")
     
     url_input = st.text_input(
         "Paste your URL or Embed Code here:", 
@@ -222,7 +275,6 @@ def main():
         key="url_input_box"
     )
     st.markdown("---")
-
 
     if st.button("Fetch Data from URL", type="primary"):
         if url_input:
@@ -244,28 +296,32 @@ def main():
         st.write("To get the complete, merged file, click the button below.")
         if st.button("Start Full Download & Merge with yt-dlp", type="primary"):
             st.session_state.stage = "downloading"
-            st.experimental_rerun()
+            st.rerun()
 
     if st.session_state.stage == "downloading":
         run_full_yt_dlp_download(st.session_state.sanitized_url)
 
-    if st.session_state.stage == "selenium_fallback":
-        start_selenium_process(st.session_state.sanitized_url)
+    if st.session_state.stage == "alternative_fallback":
+        try_alternative_extraction(st.session_state.sanitized_url)
 
-    if st.session_state.stage == "selenium_fetched":
-        st.success("✅ Selenium found a potential media link!")
+    if st.session_state.stage == "alternative_fetched":
+        st.success("✅ Found a potential media link!")
         st.code(st.session_state.stream_urls, language="text")
-        if st.button("Start Download from Found Link", key="selenium_download"):
-            st.session_state.stage = "selenium_downloading"
-            st.experimental_rerun()
+        if st.button("Start Download from Found Link", key="alternative_download"):
+            st.session_state.stage = "alternative_downloading"
+            st.rerun()
 
-    if st.session_state.stage == "selenium_downloading":
+    if st.session_state.stage == "alternative_downloading":
         download_from_direct_link(st.session_state.stream_urls)
 
     if st.session_state.stage == "downloaded":
         st.success("✅ File is ready to download!")
         info = st.session_state.download_info
         display_download_button(info["file_name"], info["data"], "Download File")
+
+    # --- Footer ---
+    st.markdown("---")
+    st.markdown("💡 **Note:** This app works best with publicly accessible media links. Some platforms may block automated downloads.")
 
 if __name__ == "__main__":
     main()
